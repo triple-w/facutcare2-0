@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class FacturasController extends Controller
 {
@@ -34,59 +35,71 @@ class FacturasController extends Controller
         return view('facturas.index', compact('facturas', 'q'));
     }
 
+    private function getRfcActivo(): ?string
+    {
+        // 1) Si en FC2 ya guardas RFC activo en sesión (como iKontrol), úsalo
+        $rfc = session('rfc_activo_rfc') ?? session('rfc_activo') ?? null;
+
+        // 2) Fallback “FactuCare clásico”: username suele ser el RFC
+        if (!$rfc) {
+            $rfc = auth()->user()->username ?? null;
+        }
+
+        return $rfc;
+    }
+
     public function create()
     {
         $userId = auth()->id();
+        $rfcActivo = $this->getRfcActivo();
 
+        // Clientes
         $clientes = DB::table('clientes')
             ->where('users_id', $userId)
             ->orderBy('razon_social')
             ->get();
 
-        // Para que el front siempre pinte __FACTURA_CREATE_OPTS__
+        // Folios (FC1)
+        $folios = collect();
+        if (Schema::hasTable('folios')) {
+            $folios = DB::table('folios')
+                ->where('users_id', $userId)
+                ->orderBy('id', 'desc')
+                ->get();
+        }
+
+        // Ventana SAT (como tu blade iKontrol lo maneja)
+        $minFecha = now()->copy()->subHours(72)->format('Y-m-d\TH:i');
+        $maxFecha = now()->format('Y-m-d\TH:i');
+
+        // Para que el blade pinte la variable JS
         $prefill = true;
-        $rfcUsuarioId = $userId;
 
-        // Catálogos SAT mínimo viable
-        $metodosPago = [
-            ['clave' => 'PUE', 'descripcion' => 'Pago en una sola exhibición'],
-            ['clave' => 'PPD', 'descripcion' => 'Pago en parcialidades o diferido'],
-        ];
+        // Si tu blade usa rfcUsuarioId (id interno), manda userId por ahora
+        $rfcUsuarioId = (int)($userId);
 
-        $formasPago = [
-            ['clave' => '01', 'descripcion' => 'Efectivo'],
-            ['clave' => '02', 'descripcion' => 'Cheque nominativo'],
-            ['clave' => '03', 'descripcion' => 'Transferencia electrónica de fondos'],
-            ['clave' => '04', 'descripcion' => 'Tarjeta de crédito'],
-            ['clave' => '28', 'descripcion' => 'Tarjeta de débito'],
-            ['clave' => '99', 'descripcion' => 'Por definir'],
-        ];
-
-        return view('facturas.create', compact('clientes', 'prefill', 'rfcUsuarioId', 'metodosPago', 'formasPago'));
+        return view('facturas.create', [
+            'prefill' => $prefill,
+            'clientes' => $clientes,
+            'folios' => $folios,
+            'rfcActivo' => $rfcActivo,
+            'rfcUsuarioId' => $rfcUsuarioId,
+            'minFecha' => $minFecha,
+            'maxFecha' => $maxFecha,
+        ]);
     }
+
 
     public function preview(Request $request)
     {
-        $payload = json_decode($request->input('payload', ''), true);
+        $userId = auth()->id();
 
+        $payload = json_decode((string)$request->input('payload', ''), true);
         if (!is_array($payload)) {
-            return back()->withErrors(['payload' => 'Payload inválido.']);
+            return back()->with('error', 'Payload inválido.');
         }
 
-        $userId = auth()->id();
-        $emisor_rfc = auth()->user()->username ?? '—';
-
-        $comprobante = [
-            'tipo_comprobante' => $payload['tipo_comprobante'] ?? '',
-            'serie'            => $payload['serie'] ?? '',
-            'folio'            => $payload['folio'] ?? '',
-            'fecha'            => $payload['fecha'] ?? null,
-            'metodo_pago'      => $payload['metodo_pago'] ?? '',
-            'forma_pago'       => $payload['forma_pago'] ?? '',
-            'comentarios_pdf'  => $payload['comentarios_pdf'] ?? '',
-        ];
-
-        $clienteId = (int) ($payload['cliente_id'] ?? 0);
+        $clienteId = (int)($payload['cliente_id'] ?? 0);
 
         $cliente = DB::table('clientes')
             ->where('id', $clienteId)
@@ -94,23 +107,194 @@ class FacturasController extends Controller
             ->first();
 
         if (!$cliente) {
-            return back()->withErrors(['cliente_id' => 'Cliente inválido o no pertenece al usuario.']);
+            return back()->with('error', 'Cliente inválido o no pertenece al usuario.');
         }
 
         $conceptos = $payload['conceptos'] ?? [];
+        if (!is_array($conceptos)) $conceptos = [];
 
-        return view('facturas.preview', compact(
-            'payload',
-            'emisor_rfc',
-            'comprobante',
-            'cliente',
-            'conceptos'
-        ));
+        // Totales server-side para que preview sea confiable
+        $subtotal = 0.0;
+        $iva = 0.0;
+        $descuento = (float)($payload['descuento'] ?? 0);
+
+        $conceptosLimpios = [];
+
+        foreach ($conceptos as $c) {
+            $cantidad = (float)($c['cantidad'] ?? 0);
+            $precio = (float)($c['precio'] ?? 0);
+            $desc = (float)($c['descuento'] ?? 0);
+
+            $importe = max(0, ($cantidad * $precio) - $desc);
+            $subtotal += $importe;
+
+            $aplicaIva = (bool)($c['aplica_iva'] ?? true);
+            $tasaIva = (float)($c['iva_tasa'] ?? 0.16);
+
+            $ivaConcepto = $aplicaIva ? ($importe * $tasaIva) : 0;
+            $iva += $ivaConcepto;
+
+            $conceptosLimpios[] = [
+                'cantidad' => $cantidad,
+                'unidad' => (string)($c['unidad'] ?? 'SERV'),
+                'descripcion' => (string)($c['descripcion'] ?? ''),
+                'clave_prod_serv' => (string)($c['clave_prod_serv'] ?? ''),
+                'clave_unidad' => (string)($c['clave_unidad'] ?? ''),
+                'precio' => $precio,
+                'descuento' => $desc,
+                'importe' => $importe,
+                'aplica_iva' => $aplicaIva,
+                'iva_tasa' => $tasaIva,
+                'iva' => $ivaConcepto,
+            ];
+        }
+
+        $total = max(0, ($subtotal - $descuento) + $iva);
+
+        $comprobante = [
+            'rfc_activo' => (string)($payload['rfc_activo'] ?? ''),
+            'folio_id' => (int)($payload['folio_id'] ?? 0),
+            'tipo_comprobante' => (string)($payload['tipo_comprobante'] ?? 'I'),
+            'metodo_pago' => (string)($payload['metodo_pago'] ?? 'PUE'),
+            'forma_pago' => (string)($payload['forma_pago'] ?? '99'),
+            'moneda' => (string)($payload['moneda'] ?? 'MXN'),
+            'comentarios_pdf' => (string)($payload['comentarios_pdf'] ?? ''),
+        ];
+
+        $totales = [
+            'subtotal' => $subtotal,
+            'descuento' => $descuento,
+            'iva' => $iva,
+            'total' => $total,
+        ];
+
+        return view('facturas.preview', compact('cliente', 'conceptosLimpios', 'comprobante', 'totales'));
     }
 
     /* ==========================
        Helpers
     ========================== */
+
+    public function apiSeriesNext(Request $request)
+    {
+        $userId = auth()->id();
+
+        $tipo = strtoupper((string)$request->get('tipo', 'I')); // I/E/T
+        $folioId = (int)$request->get('folio_id', 0);
+
+        // 1) Si mandan folio_id, úsalo directo
+        if ($folioId > 0) {
+            $f = DB::table('folios')
+                ->where('users_id', $userId)
+                ->where('id', $folioId)
+                ->first();
+
+            if ($f) {
+                return response()->json([
+                    'ok' => true,
+                    'folio_id' => (int)$f->id,
+                    'serie' => (string)$f->serie,
+                    'folio' => (int)$f->folio,
+                    'tipo' => (string)$f->tipo,
+                ]);
+            }
+        }
+
+        // 2) Si no hay folio_id, intenta encontrar por tipo
+        // La columna tipo en FC1 varía (ingreso/egreso/traslado/factura/etc).
+        $patterns = match ($tipo) {
+            'E' => ['%egreso%', '%nota%', '%credito%', '%nc%'],
+            'T' => ['%traslado%'],
+            default => ['%fact%', '%ingreso%', '%factura%'],
+        };
+
+        $where = "LOWER(tipo) LIKE ? OR LOWER(tipo) LIKE ? OR LOWER(tipo) LIKE ? OR LOWER(tipo) LIKE ?";
+        $params = array_pad($patterns, 4, $patterns[0]);
+
+        $f = DB::table('folios')
+            ->where('users_id', $userId)
+            ->whereRaw($where, $params)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        // 3) fallback: el último folio del usuario
+        if (!$f) {
+            $f = DB::table('folios')
+                ->where('users_id', $userId)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
+
+        if (!$f) {
+            return response()->json(['ok' => false, 'message' => 'No hay folios configurados.'], 404);
+        }
+
+        return response()->json([
+            'ok' => true, 
+            'folio_id' => (int)$f->id,
+            'serie' => (string)$f->serie,
+            'folio' => (int)$f->folio,
+            'tipo' => (string)$f->tipo,
+        ]);
+    }
+
+    public function apiProductosBuscar(Request $request)
+    {
+        $userId = auth()->id();
+        $q = trim((string)$request->get('q', ''));
+
+        if (mb_strlen($q) < 2) {
+            return response()->json(['items' => []]);
+        }
+
+        $items = DB::table('productos')
+            ->where('users_id', $userId)
+            ->where(function ($qq) use ($q) {
+                $qq->where('descripcion', 'like', "%{$q}%")
+                ->orWhere('clave', 'like', "%{$q}%");
+            })
+            ->orderBy('descripcion')
+            ->limit(15)
+            ->get();
+
+        return response()->json(['items' => $items]);
+    }
+
+    public function apiSatProdServ(Request $request)
+    {
+        $q = trim((string)$request->get('q', ''));
+
+        if (mb_strlen($q) < 3) {
+            return response()->json(['items' => []]);
+        }
+
+        $items = DB::table('clave_prod_serv')
+            ->where('clave', 'like', "{$q}%")
+            ->orWhere('descripcion', 'like', "%{$q}%")
+            ->limit(20)
+            ->get();
+
+        return response()->json(['items' => $items]);
+    }
+
+    public function apiSatUnidad(Request $request)
+    {
+        $q = trim((string)$request->get('q', ''));
+
+        if (mb_strlen($q) < 2) {
+            return response()->json(['items' => []]);
+        }
+
+        $items = DB::table('clave_unidad')
+            ->where('clave', 'like', "{$q}%")
+            ->orWhere('descripcion', 'like', "%{$q}%")
+            ->limit(20)
+            ->get();
+
+        return response()->json(['items' => $items]);
+    }
+
+
 
     private function facturaOrFail(int $id): object
     {

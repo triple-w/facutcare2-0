@@ -54,10 +54,10 @@
 
         <!-- Page wrapper -->
         <div class="flex h-[100dvh] overflow-hidden">
-        <x-app.sidebar :variant="$sidebarVariant" />
+        <x-app.sidebar :variant="$attributes->get('sidebarVariant', 'default')" />
 
         <div class="relative flex flex-col flex-1 overflow-y-auto overflow-x-hidden {{ $background }}" x-ref="contentarea">
-            <x-app.header :variant="$headerVariant" />
+            <x-app.header :variant="$attributes->get('headerVariant', 'default')" />
 
                 <main class="grow">
                     {{-- Si la vista usa <x-app-layout> puede venir un slot llamado "header" --}}
@@ -69,6 +69,7 @@
 
                     {{-- Compatibilidad: Blade Component ($slot) o Layout clásico (@yield) --}}
                     @isset($slot)
+                        @yield('content')
                         {{ $slot }}
                     @else
                         @yield('content')

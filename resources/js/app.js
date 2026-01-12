@@ -8,6 +8,7 @@ import focus from '@alpinejs/focus'
 import intersect from '@alpinejs/intersect'
 import mask from '@alpinejs/mask'
 
+
 // Exponer Alpine (opcional, útil para debug)
 window.Alpine = Alpine
 

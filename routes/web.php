@@ -57,6 +57,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::get('/facturas/{id}/pdf', [FacturasController::class, 'downloadPdf'])->name('facturas.pdf');
         Route::get('/facturas/{id}/ver', [FacturasController::class, 'show'])->name('facturas.ver');
 
+
         Route::get('/facturas/{id}/acuse', [FacturasController::class, 'downloadAcuse'])->name('facturas.acuse');
         Route::post('/facturas/{id}/regenerar-pdf', [FacturasController::class, 'regenerarPdf'])->name('facturas.regenerarPdf');
 
@@ -68,6 +69,14 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
 
     });
+
+    Route::middleware(['web','auth'])->prefix('api')->group(function () {
+        Route::get('series/next', [SeriesController::class, 'next'])->name('api.series.next');
+        Route::get('productos/buscar', [ProductosApiController::class, 'buscar'])->name('api.productos.buscar');
+        Route::get('sat/clave-prod-serv', [App\Http\Controllers\Api\SatController::class, 'prodServ']);
+        Route::get('sat/clave-unidad', [App\Http\Controllers\Api\SatController::class, 'unidad']);
+    });
+
 
     // 4) Reportes
     Route::view('/reportes', 'pages/coming-soon')->name('reportes.index');

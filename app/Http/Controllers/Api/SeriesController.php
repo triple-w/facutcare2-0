@@ -28,7 +28,7 @@ class SeriesController extends Controller
 
         $folioRow = DB::table('folios')
             ->where('users_id', $userId)
-            ->where('tipo', $tipo)
+            ->where('tipo', $tipoFolio)
             ->orderBy('id')
             ->first();
 
