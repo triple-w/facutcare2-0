@@ -10,8 +10,20 @@
        class="btn bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200">
       ← Volver a editar
     </a>
-  </div>
+    <button type="button"
+          class="btn border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-200"
+          onclick="alert('Guardar borrador: pendiente');">
+    Guardar borrador
+  </button>
 
+  <form method="POST" action="{{ route('facturas.timbrar') }}">
+    @csrf
+    <button type="submit"
+            class="btn bg-emerald-600 hover:bg-emerald-700 text-white">
+      Timbrar
+    </button>
+  </div>
+  
   {{-- Datos generales --}}
   <div class="bg-white dark:bg-gray-800 shadow rounded-lg p-6 mb-6">
     <h2 class="text-lg font-semibold mb-4">Datos del comprobante</h2>

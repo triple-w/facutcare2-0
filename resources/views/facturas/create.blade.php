@@ -73,6 +73,7 @@
       },
 
       routePreview: @json(route('facturas.preview')),
+      routeTimbrar: @json(route('facturas.timbrar')),
 
       // catálogos para selects
       metodosPago: @json($metodosPago, JSON_UNESCAPED_UNICODE),
@@ -87,6 +88,12 @@
       @csrf
       <input type="hidden" name="payload" x-ref="payload">
     </form>
+
+    <form method="POST" :action="opts.routeTimbrar" x-ref="timbrarForm">
+      @csrf
+      <input type="hidden" name="payload" x-ref="payloadTimbrar">
+    </form>
+
 
     {{-- DATOS DEL COMPROBANTE --}}
     <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-4">
@@ -104,6 +111,18 @@
             <span x-show="!isSubmitting">Previsualizar</span>
             <span x-show="isSubmitting">Generando…</span>
           </button>
+          <button type="button"
+                    class="btn border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-200"
+                    @click="guardarBorrador()">
+              Guardar borrador
+            </button>
+
+            <button type="button"
+                    class="btn bg-emerald-600 hover:bg-emerald-700 text-white"
+                    @click="timbrar()"
+                    :disabled="isSubmitting">
+              Timbrar
+            </button>
         </div>
       </div>
 
@@ -1145,6 +1164,60 @@
       this.$refs.payload.value = JSON.stringify(payload);
       this.$nextTick(() => this.$refs.previewForm.submit());
     },
+
+    guardarBorrador(){
+  // Por ahora no hace nada, solo UI
+  alert('Guardar borrador: pendiente (por ahora no se ejecuta).');
+},
+
+    timbrar(){
+      if (!this.form.cliente_id) { alert('Selecciona un cliente'); return; }
+      if (!this.form.serie || !this.form.folio) { alert('Serie/Folio inválidos'); return; }
+      if (!this.form.conceptos.length) { alert('Agrega al menos un concepto'); return; }
+
+      this.isSubmitting = true;
+
+      const payload = {
+        rfc_activo: this.opts.rfcActivo || '',
+        cliente_id: Number(this.form.cliente_id),
+        tipo_comprobante: this.form.tipo_comprobante,
+
+        serie: this.form.serie,
+        folio: this.form.folio,
+        fecha: this.form.fecha,
+
+        metodo_pago: this.form.metodo_pago,
+        forma_pago: this.form.forma_pago,
+        uso_cfdi: this.form.uso_cfdi,
+        exportacion: this.form.exportacion,
+        complemento_exportacion: this.form.complemento_exportacion,
+        moneda: 'MXN',
+
+        comentarios_pdf: this.form.comentarios_pdf,
+
+        impuestos_locales: this.form.impuestos_locales,
+        relacionados: this.form.relacionados.map(r => ({ tipo_relacion: r.tipo_relacion, uuid: r.uuid })),
+
+        conceptos: this.form.conceptos.map(r => ({
+          descripcion: r.descripcion,
+          clave_prod_serv: r.clave_prod_serv,
+          clave_unidad: r.clave_unidad,
+          unidad: r.unidad,
+          cantidad: Number(r.cantidad||0),
+          precio: Number(r.precio||0),
+          descuento: Number(r.descuento||0),
+
+          aplica_iva: !!r.aplica_iva,
+          iva_tasa: Number(r.iva_tasa ?? 0.16),
+
+          impuestos: Array.isArray(r.impuestos) ? r.impuestos : [],
+        })),
+      };
+
+      this.$refs.payloadTimbrar.value = JSON.stringify(payload);
+      this.$nextTick(() => this.$refs.timbrarForm.submit());
+    },
+
   });
 </script>
 @endpush

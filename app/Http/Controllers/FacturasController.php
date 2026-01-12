@@ -94,7 +94,7 @@ class FacturasController extends Controller
         session()->forget('factura_draft');
         return redirect()->route('facturas.create');
     }
-    
+
     public function preview(Request $request)
     {
         $userId = auth()->id();
@@ -202,6 +202,174 @@ class FacturasController extends Controller
 
         return view('facturas.preview', compact('cliente', 'conceptosLimpios', 'comprobante', 'totales'));
     }
+
+    public function timbrar(Request $request)
+    {
+        // Para timbrar desde Preview, tomamos el draft de sesión
+        $payload = session('factura_draft');
+
+        if (!is_array($payload) || empty($payload)) {
+            // fallback por si luego quieres enviarlo por POST
+            $payload = json_decode((string)$request->input('payload', ''), true);
+        }
+
+        if (!is_array($payload) || empty($payload)) {
+            return back()->with('error', 'No hay datos de factura en sesión. Regresa a crear la factura.');
+        }
+
+        // Aquí llamamos a tu generador de XML (lo hacemos en un método privado para mantener orden)
+        $xml = $this->generarXmlCfdi40DesdePayload($payload);
+
+        // Mostrar XML directo en pantalla (más fácil que dd)
+        return response($xml, 200)->header('Content-Type', 'text/plain; charset=UTF-8');
+    }
+
+    private function generarXmlCfdi40DesdePayload(array $payload): string
+    {
+        $userId = auth()->id();
+
+        $clienteId = (int)($payload['cliente_id'] ?? 0);
+        $cliente = \DB::table('clientes')->where('id', $clienteId)->where('users_id', $userId)->first();
+        if (!$cliente) {
+            throw new \RuntimeException('Cliente inválido.');
+        }
+
+        $perfil = \DB::table('users_perfil')->where('users_id', $userId)->first();
+        if (!$perfil) {
+            throw new \RuntimeException('No existe perfil de emisor (users_perfil).');
+        }
+
+        $conceptos = $payload['conceptos'] ?? [];
+        if (!is_array($conceptos) || !count($conceptos)) {
+            throw new \RuntimeException('No hay conceptos.');
+        }
+
+        $dom = new \DOMDocument('1.0', 'UTF-8');
+        $dom->formatOutput = true;
+
+        $cfdiNS = 'http://www.sat.gob.mx/cfd/4';
+        $xsiNS  = 'http://www.w3.org/2001/XMLSchema-instance';
+
+        $c = $dom->createElementNS($cfdiNS, 'cfdi:Comprobante');
+        $dom->appendChild($c);
+
+        $c->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xsi', $xsiNS);
+        $c->setAttributeNS($xsiNS, 'xsi:schemaLocation',
+            'http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd'
+        );
+
+        $serie = (string)($payload['serie'] ?? '');
+        $folio = (string)($payload['folio'] ?? '');
+        $fechaIn = (string)($payload['fecha'] ?? '');
+        $fecha = $fechaIn ? date('Y-m-d\TH:i:s', strtotime($fechaIn)) : date('Y-m-d\TH:i:s');
+
+        $tipoComprobante = (string)($payload['tipo_comprobante'] ?? 'I');
+        $moneda = (string)($payload['moneda'] ?? 'MXN');
+        $formaPago = (string)($payload['forma_pago'] ?? '99');
+        $metodoPago = (string)($payload['metodo_pago'] ?? 'PUE');
+        $usoCfdi = (string)($payload['uso_cfdi'] ?? '');
+        $exportacion = (string)($payload['exportacion'] ?? '01');
+        $lugarExpedicion = (string)($perfil->codigo_postal ?? '');
+
+        $c->setAttribute('Version', '4.0');
+        if ($serie !== '') $c->setAttribute('Serie', $serie);
+        if ($folio !== '') $c->setAttribute('Folio', $folio);
+        $c->setAttribute('Fecha', $fecha);
+        $c->setAttribute('Moneda', $moneda);
+        $c->setAttribute('TipoDeComprobante', $tipoComprobante);
+        $c->setAttribute('Exportacion', $exportacion);
+        if ($lugarExpedicion !== '') $c->setAttribute('LugarExpedicion', $lugarExpedicion);
+
+        if ($tipoComprobante !== 'T') {
+            $c->setAttribute('FormaPago', $formaPago);
+            $c->setAttribute('MetodoPago', $metodoPago);
+        }
+
+        // Emisor
+        $em = $dom->createElementNS($cfdiNS, 'cfdi:Emisor');
+        $em->setAttribute('Rfc', (string)($perfil->rfc ?? ''));
+        $em->setAttribute('Nombre', $this->xmlClean((string)($perfil->razon_social ?? '')));
+        $regEmisor = (string)($perfil->numero_regimen33 ?? $perfil->numero_regimen ?? '');
+        if ($regEmisor !== '') $em->setAttribute('RegimenFiscal', $regEmisor);
+        $c->appendChild($em);
+
+        // Receptor
+        $re = $dom->createElementNS($cfdiNS, 'cfdi:Receptor');
+        $re->setAttribute('Rfc', (string)($cliente->rfc ?? ''));
+        $re->setAttribute('Nombre', $this->xmlClean((string)($cliente->razon_social ?? '')));
+        if (!empty($cliente->codigo_postal)) $re->setAttribute('DomicilioFiscalReceptor', (string)$cliente->codigo_postal);
+        if (!empty($cliente->regimen_fiscal)) $re->setAttribute('RegimenFiscalReceptor', (string)$cliente->regimen_fiscal);
+        if ($usoCfdi !== '') $re->setAttribute('UsoCFDI', $usoCfdi);
+        $c->appendChild($re);
+
+        // Conceptos + totales básicos (sin impuestos globales todavía, solo para revisar)
+        $sub = 0.0;
+        $desc = 0.0;
+
+        $conceptosNode = $dom->createElementNS($cfdiNS, 'cfdi:Conceptos');
+
+        foreach ($conceptos as $row) {
+            $cantidad = (float)($row['cantidad'] ?? 0);
+            $precio   = (float)($row['precio'] ?? 0);
+            $d        = (float)($row['descuento'] ?? 0);
+
+            $importeBruto = $cantidad * $precio;
+            $sub += $importeBruto;
+            $desc += $d;
+
+            $co = $dom->createElementNS($cfdiNS, 'cfdi:Concepto');
+            $co->setAttribute('ClaveProdServ', (string)($row['clave_prod_serv'] ?? ''));
+            $co->setAttribute('Cantidad', $this->fmt($cantidad, 6));
+            $co->setAttribute('ClaveUnidad', (string)($row['clave_unidad'] ?? ''));
+            if (!empty($row['unidad'])) $co->setAttribute('Unidad', $this->xmlClean((string)$row['unidad']));
+            $co->setAttribute('Descripcion', $this->xmlClean((string)($row['descripcion'] ?? '')));
+            $co->setAttribute('ValorUnitario', $this->fmt($precio, 2));
+            $co->setAttribute('Importe', $this->fmt($importeBruto, 2));
+            if ($d > 0) $co->setAttribute('Descuento', $this->fmt($d, 2));
+
+            // por ahora: si aplica iva o trae impuestos, lo marcamos como 02, si no 01
+            $tieneImp = !empty($row['aplica_iva']) || (is_array($row['impuestos'] ?? null) && count($row['impuestos']));
+            $co->setAttribute('ObjetoImp', $tieneImp ? '02' : '01');
+
+            $conceptosNode->appendChild($co);
+        }
+
+        $c->appendChild($conceptosNode);
+
+        $total = max(0, ($sub - $desc));
+
+        $c->setAttribute('SubTotal', $this->fmt($sub, 2));
+        if ($desc > 0) $c->setAttribute('Descuento', $this->fmt($desc, 2));
+        $c->setAttribute('Total', $this->fmt($total, 2));
+
+        return $dom->saveXML();
+    }
+
+    private function fmt($n, int $decimals = 2): string
+    {
+        $n = (float)$n;
+        return number_format($n, $decimals, '.', '');
+    }
+
+    private function xmlClean(string $s): string
+    {
+        $s = mb_convert_encoding($s, 'UTF-8', 'UTF-8');
+        // elimina caracteres de control no válidos en XML 1.0 (excepto tab, lf, cr)
+        $s = preg_replace('/[^\x09\x0A\x0D\x20-\x{D7FF}\x{E000}-\x{FFFD}]/u', '', $s);
+        return trim($s);
+    }
+
+    private function mapImpuestoToSat(string $imp): string
+    {
+        $v = strtoupper(trim($imp));
+        return match ($v) {
+            'IVA', '002' => '002',
+            'ISR', '001' => '001',
+            'IEPS','003' => '003',
+            default => preg_match('/^\d{3}$/', $v) ? $v : '002',
+        };
+    }
+
 
     /* ==========================
        Helpers

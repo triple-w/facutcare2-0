@@ -51,6 +51,8 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::get('facturas/nueva', [FacturasController::class, 'nueva'])->name('facturas.nueva');
         Route::get('facturas/create', [FacturasController::class, 'create'])->name('facturas.create');
         Route::post('facturas/preview', [FacturasController::class, 'preview'])->name('facturas.preview');
+        Route::post('facturas/timbrar', [FacturasController::class, 'timbrar'])->name('facturas.timbrar');
+
 
         //--nuevas rutas
 
