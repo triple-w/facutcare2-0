@@ -62,6 +62,7 @@
       clientes: @json($clientesArr, JSON_UNESCAPED_UNICODE),
       minFecha: @json($minFecha),
       maxFecha: @json($maxFecha),
+      prefill: @json($prefill ?? [], JSON_UNESCAPED_UNICODE),
 
       endpoints: {
         nextFolio: @json(url('/api/series/next')),
@@ -758,21 +759,64 @@
     },
 
     init(){
-      // concepto inicial
+      const p = this.opts.prefill && typeof this.opts.prefill === 'object' ? this.opts.prefill : null;
+
+      if (p && Object.keys(p).length) {
+        // scalars
+        for (const k of ['tipo_comprobante','serie','folio','fecha','metodo_pago','forma_pago','uso_cfdi','exportacion','comentarios_pdf','cliente_id']) {
+          if (p[k] !== undefined && p[k] !== null) this.form[k] = p[k];
+        }
+
+        // objetos anidados
+        if (p.complemento_exportacion && typeof p.complemento_exportacion === 'object') {
+          this.form.complemento_exportacion = { ...this.form.complemento_exportacion, ...p.complemento_exportacion };
+        }
+        if (p.impuestos_locales && typeof p.impuestos_locales === 'object') {
+          this.form.impuestos_locales = { ...this.form.impuestos_locales, ...p.impuestos_locales };
+        }
+
+        // arrays
+        if (Array.isArray(p.relacionados)) {
+          this.form.relacionados = p.relacionados.map(r => ({
+            uid: this.uid(),
+            tipo_relacion: r.tipo_relacion || '',
+            uuid: r.uuid || ''
+          }));
+        }
+
+        if (Array.isArray(p.conceptos)) {
+          this.form.conceptos = p.conceptos.map(r => ({
+            uid: this.uid(),
+            descripcion: r.descripcion || '',
+            clave_prod_serv: r.clave_prod_serv || '',
+            clave_unidad: r.clave_unidad || '',
+            unidad: r.unidad || '',
+            cantidad: Number(r.cantidad || 0),
+            precio: Number(r.precio || 0),
+            descuento: Number(r.descuento || 0),
+            impuestos: Array.isArray(r.impuestos) ? r.impuestos : [],
+            aplica_iva: (r.aplica_iva !== undefined ? !!r.aplica_iva : true),
+            iva_tasa: Number(r.iva_tasa ?? 0.16),
+          }));
+        }
+
+        // sincroniza panel cliente
+        if (this.form.cliente_id) this.onClienteChange();
+      }
+
+      // concepto inicial si sigue vacío
       if (!Array.isArray(this.form.conceptos) || !this.form.conceptos.length) {
         this.agregarConcepto();
       }
 
-      // serie/folio
-      this.pedirSiguienteFolio();
+      // SOLO pedir folio si no viene del draft
+      if (!this.form.serie || !this.form.folio) {
+        this.pedirSiguienteFolio();
+      }
 
-      // totales
       this.recalcularTotales();
     },
 
-    onTipoComprobanteChange(){
-      this.pedirSiguienteFolio();
-    },
 
     async pedirSiguienteFolio(){
       try {
@@ -1062,11 +1106,19 @@
         rfc_activo: this.opts.rfcActivo || '',
         cliente_id: Number(this.form.cliente_id),
         tipo_comprobante: this.form.tipo_comprobante,
+        
+        serie: this.form.serie,
+        folio: this.form.folio,
+        fecha: this.form.fecha,
+
+
         metodo_pago: this.form.metodo_pago,
         forma_pago: this.form.forma_pago,
         uso_cfdi: this.form.uso_cfdi,
         exportacion: this.form.exportacion,
         complemento_exportacion: this.form.complemento_exportacion,
+        moneda: 'MXN',
+
         comentarios_pdf: this.form.comentarios_pdf,
 
         impuestos_locales: this.form.impuestos_locales,

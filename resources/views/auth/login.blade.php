@@ -1,5 +1,5 @@
 <x-authentication-layout>
-    <h1 class="text-3xl text-gray-800 dark:text-gray-100 font-bold mb-6">{{ __('Welcome back!') }}</h1>
+    <h1 class="text-3xl text-gray-800 dark:text-gray-100 font-bold mb-6">{{ __('Bienvenido a iKontrol!') }}</h1>
     @if (session('status'))
         <div class="mb-4 font-medium text-sm text-green-600">
             {{ session('status') }}
@@ -22,12 +22,12 @@
             @if (Route::has('password.request'))
                 <div class="mr-1">
                     <a class="text-sm underline hover:no-underline" href="{{ route('password.request') }}">
-                        {{ __('Forgot Password?') }}
+                        {{ __('Olvidaste tu Contraseña?') }}
                     </a>
                 </div>
             @endif            
             <x-button class="ml-3">
-                {{ __('Sign in') }}
+                {{ __('Iniciar Sesion') }}
             </x-button>            
         </div>
     </form>
@@ -39,7 +39,7 @@
                 {{ __('Don\'t you have an account?') }} <a class="font-medium text-violet-500 hover:text-violet-600 dark:hover:text-violet-400" href="{{ route('register') }}">{{ __('Sign Up') }}</a>
             </div>
         @endif
-        <!-- Warning -->
+        <!-- 
         <div class="mt-5">
             <div class="bg-yellow-500/20 text-yellow-700 px-3 py-2 rounded-lg">
                 <svg class="inline w-3 h-3 shrink-0 fill-current" viewBox="0 0 12 12">
@@ -49,6 +49,6 @@
                     To support you during the pandemic super pro features are free until March 31st.
                 </span>
             </div>
-        </div>
+        </div>Warning -->
     </div>
 </x-authentication-layout>

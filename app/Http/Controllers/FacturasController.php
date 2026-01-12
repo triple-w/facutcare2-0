@@ -48,7 +48,7 @@ class FacturasController extends Controller
         return $rfc;
     }
 
-    public function create()
+    public function create(Request $request)
     {
         $userId = auth()->id();
         $rfcActivo = $this->getRfcActivo();
@@ -73,7 +73,7 @@ class FacturasController extends Controller
         $maxFecha = now()->format('Y-m-d\TH:i');
 
         // Para que el blade pinte la variable JS
-        $prefill = true;
+        $prefill = session('factura_draft', []);
 
         // Si tu blade usa rfcUsuarioId (id interno), manda userId por ahora
         $rfcUsuarioId = (int)($userId);
@@ -89,7 +89,12 @@ class FacturasController extends Controller
         ]);
     }
 
-
+    public function nueva()
+    {
+        session()->forget('factura_draft');
+        return redirect()->route('facturas.create');
+    }
+    
     public function preview(Request $request)
     {
         $userId = auth()->id();
@@ -114,22 +119,25 @@ class FacturasController extends Controller
         if (!is_array($conceptos)) $conceptos = [];
 
         // Totales server-side para que preview sea confiable
+        // Totales server-side para que preview sea confiable
         $subtotal = 0.0;
         $iva = 0.0;
-        $descuento = (float)($payload['descuento'] ?? 0);
+        $descuento = 0.0; // <-- antes venía del payload
 
         $conceptosLimpios = [];
 
         foreach ($conceptos as $c) {
             $cantidad = (float)($c['cantidad'] ?? 0);
-            $precio = (float)($c['precio'] ?? 0);
-            $desc = (float)($c['descuento'] ?? 0);
+            $precio   = (float)($c['precio'] ?? 0);
+            $desc     = (float)($c['descuento'] ?? 0);
 
             $importe = max(0, ($cantidad * $precio) - $desc);
             $subtotal += $importe;
 
+            $descuento += $desc; // <-- suma real de descuentos
+
             $aplicaIva = (bool)($c['aplica_iva'] ?? true);
-            $tasaIva = (float)($c['iva_tasa'] ?? 0.16);
+            $tasaIva   = (float)($c['iva_tasa'] ?? 0.16);
 
             $ivaConcepto = $aplicaIva ? ($importe * $tasaIva) : 0;
             $iva += $ivaConcepto;
@@ -154,10 +162,19 @@ class FacturasController extends Controller
         $comprobante = [
             'rfc_activo' => (string)($payload['rfc_activo'] ?? ''),
             'folio_id' => (int)($payload['folio_id'] ?? 0),
+
             'tipo_comprobante' => (string)($payload['tipo_comprobante'] ?? 'I'),
+            'serie' => (string)($payload['serie'] ?? ''),
+            'folio' => (string)($payload['folio'] ?? ''),
+            'fecha' => (string)($payload['fecha'] ?? ''),
+
             'metodo_pago' => (string)($payload['metodo_pago'] ?? 'PUE'),
             'forma_pago' => (string)($payload['forma_pago'] ?? '99'),
+            'uso_cfdi' => (string)($payload['uso_cfdi'] ?? ''),
+            'exportacion' => (string)($payload['exportacion'] ?? ''),
             'moneda' => (string)($payload['moneda'] ?? 'MXN'),
+
+            'descuento' => $descuento,
             'comentarios_pdf' => (string)($payload['comentarios_pdf'] ?? ''),
         ];
 
@@ -167,6 +184,21 @@ class FacturasController extends Controller
             'iva' => $iva,
             'total' => $total,
         ];
+
+        // Guarda el draft para poder volver a editar SIN perder datos
+        session()->put('factura_draft', $payload);
+
+        // IMPORTANTE: pásalo como "conceptos" (lo que espera el blade)
+        return view('facturas.preview', [
+            'cliente' => $cliente,
+            'conceptos' => $conceptosLimpios,
+            'comprobante' => $comprobante,
+            'totales' => $totales,
+        ]);
+
+
+        // Guarda el draft para poder volver a editar SIN perder datos
+    session()->put('factura_draft', $payload);
 
         return view('facturas.preview', compact('cliente', 'conceptosLimpios', 'comprobante', 'totales'));
     }

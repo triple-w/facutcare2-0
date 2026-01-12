@@ -48,6 +48,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     Route::prefix('documentos')->group(function () {
 
         Route::get('facturas', [FacturasController::class, 'index'])->name('facturas.index');
+        Route::get('facturas/nueva', [FacturasController::class, 'nueva'])->name('facturas.nueva');
         Route::get('facturas/create', [FacturasController::class, 'create'])->name('facturas.create');
         Route::post('facturas/preview', [FacturasController::class, 'preview'])->name('facturas.preview');
 
