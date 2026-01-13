@@ -98,27 +98,146 @@ class FacturasController extends Controller
     }
 
     public function preview(Request $request)
-    {
-        $userId = auth()->id();
-        if (!$userId) {
-            return redirect()->route('login');
-        }
-
-        $payload = json_decode((string)$request->input('payload', ''), true);
-
-        if (!is_array($payload) || empty($payload)) {
-            return redirect()->route('facturas.create')
-                ->with('error', 'Payload inválido.');
-        }
-
-        // ✅ aquí ya existe $userId
-        $payload = $this->normalizarFolioEnPayload($userId, $payload);
-
-        // guarda el draft para volver a editar / timbrar
-        session()->put('factura_draft', $payload);
-
-        return $this->renderPreviewFromPayload($payload);
+{
+    $userId = auth()->id();
+    if (!$userId) {
+        return redirect()->route('login');
     }
+
+    $payload = json_decode((string)$request->input('payload', ''), true);
+
+    if (!is_array($payload) || empty($payload)) {
+        return redirect()->route('facturas.create')
+            ->with('error', 'Payload inválido.');
+    }
+
+    // ✅ folio normalizado
+    $payload = $this->normalizarFolioEnPayload($userId, $payload);
+
+    // ✅ debug ya con payload válido
+    $payload['_debug_timbrado_paths'] = $this->debugTimbradoPaths($userId);
+
+    // guarda el draft para volver a editar / timbrar
+    session()->put('factura_draft', $payload);
+
+    return $this->renderPreviewFromPayload($payload);
+}
+
+    private function debugTimbradoPaths(int $userId): array
+    {
+        $tablaDocs = 'users_info_factura_documentos';
+    $tablaInfo = 'users_info_factura';
+
+    if (!Schema::hasTable($tablaInfo) || !Schema::hasTable($tablaDocs)) {
+        return [
+            'error' => 'No existen las tablas users_info_factura o users_info_factura_documentos.',
+            'paths' => [
+                'base_path' => base_path(),
+                'public_path' => public_path(),
+                'storage_path' => storage_path(),
+                'cwd' => getcwd(),
+            ],
+        ];
+    }
+
+    // 1) Encontrar el registro de users_info_factura por users_id
+    $info = DB::table($tablaInfo)
+        ->where('users_id', $userId)
+        ->first();
+
+    if (!$info || !isset($info->id)) {
+        return [
+            'error' => "No encontré users_info_factura para users_id={$userId}.",
+            'user_id' => $userId,
+            'paths' => [
+                'base_path' => base_path(),
+                'public_path' => public_path(),
+                'storage_path' => storage_path(),
+                'cwd' => getcwd(),
+            ],
+        ];
+    }
+
+    $usersFacturaInfoId = (int)$info->id;
+
+    // 2) Traer documentos por users_factura_info_id
+    $docs = DB::table($tablaDocs)
+        ->where('users_factura_info_id', $usersFacturaInfoId)
+        ->get();
+
+    $out = [
+        'user_id' => $userId,
+        'users_factura_info_id' => $usersFacturaInfoId,
+        'docs_count' => count($docs),
+        'docs' => [],
+        'paths' => [
+            'base_path' => base_path(),
+            'public_path' => public_path(),
+            'storage_path' => storage_path(),
+            'cwd' => getcwd(),
+        ],
+    ];
+
+    foreach ($docs as $d) {
+        $tipo   = (string)($d->tipo ?? '');
+        $name   = (string)($d->_name ?? '');
+        $pathDb = (string)($d->_path ?? '');
+
+        // candidato PEM (tu lógica vieja: si es .key => .key.pem)
+        $pemName = $name;
+        $ext = strtolower(pathinfo($pemName, PATHINFO_EXTENSION));
+        if ($ext === 'key') {
+            $pemName .= '.pem';
+        }
+
+        // candidatos: muchos proyectos guardan uploads en public/
+        $candidatePublic      = public_path(trim($pathDb, "/\\") . '/' . $name);
+        $candidatePublicPem   = public_path(trim($pathDb, "/\\") . '/' . $pemName);
+
+        // candidatos: otros los guardan en storage/app/
+        $candidateStorage     = storage_path('app/' . trim($pathDb, "/\\") . '/' . $name);
+        $candidateStoragePem  = storage_path('app/' . trim($pathDb, "/\\") . '/' . $pemName);
+
+        // candidatos: ruta directa desde base_path
+        $candidateBase        = base_path(trim($pathDb, "/\\") . '/' . $name);
+        $candidateBasePem     = base_path(trim($pathDb, "/\\") . '/' . $pemName);
+
+        $out['docs'][] = [
+            'tipo' => $tipo,
+            '_name' => $name,
+            '_path' => $pathDb,
+            'numero_certificado' => (string)($d->numero_certificado ?? ''),
+            'vigencia' => (string)($d->vigencia ?? ''),
+
+            'candidates' => [
+                'public'  => $candidatePublic,
+                'storage' => $candidateStorage,
+                'base'    => $candidateBase,
+            ],
+            'exists' => [
+                'public'  => file_exists($candidatePublic),
+                'storage' => file_exists($candidateStorage),
+                'base'    => file_exists($candidateBase),
+            ],
+
+            'pem_name_guess' => $pemName,
+            'pem_candidates' => [
+                'public'  => $candidatePublicPem,
+                'storage' => $candidateStoragePem,
+                'base'    => $candidateBasePem,
+            ],
+            'pem_exists' => [
+                'public'  => file_exists($candidatePublicPem),
+                'storage' => file_exists($candidateStoragePem),
+                'base'    => file_exists($candidateBasePem),
+            ],
+        ];
+    }
+
+    return $out;
+    }
+
+
 
 
 

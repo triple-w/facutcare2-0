@@ -208,219 +208,297 @@ class MultiPac {
 
 
     public function generarFacturaWhitData($user, $userFactura, $data) {
-        $cerFile = $user->getInfoFactura()->getDocumentByType(App\Models\UsersInfoFacturaDocumentos::CERTIFICADO);
 
-        $fechaFactura = new Carbon();
-        $diasDiferencia = $fechaFactura->diffInDays(Carbon::now());
-        if ($diasDiferencia > 3) {
-            Flash::error('Factura fuera de fecha');
-            return redirect()->action('Users\FacturasV33Controller@getIndex');
-        }
+    // -----------------------------
+    // Helpers locales (solo para esta función)
+    // -----------------------------
+    $resolveDocPath = function($doc): string {
+        // 1) Preferir _path / getPath si existe
+        $p = '';
 
-        $tipoDocumento = strtolower(App\Models\Facturas::getTipoDocumento('FACTURA'));
-        $f = $user->getFolioByTipo(App\Models\Facturas::getTipoDocumento('FACTURA'));
-        if (empty($f)) {
-            Flash::error('No existe un folio configurado para ese tipo de Documento');
-            return redirect()->action('Users\FacturasV33Controller@getIndex');
-        }
-
-        $serie = $f->getSerie();
-        $folio = $f->getFolio();
-        $fechaFactura = $fechaFactura->format('Y-m-d\TH:i:s');
-        $noCertificado = $cerFile->getNumeroCertificado();
-        $moneda = 'MXN';
-        $tipoComprobante = 'I';
-        $formaPago = '04';
-        // $formaPago = '01';
-        $metodoPago = 'PUE';
-        // $metodoPago = 'PUE';
-        $tipoCambio = '1.0';
-        $usoCFDI = 'G03';
-        // $usoCFDI = 'G01';
-        $perfil = $user->getPerfil();
-        $lugarExpedicion = $perfil->getCodigoPostal();
-
-        $dataXml = [
-            '@attributes' => [
-                'xsi:schemaLocation' => 'http://www.sat.gob.mx/cfd/3 http://www.sat.gob.mx/sitio_internet/cfd/3/cfdv33.xsd',
-                'xmlns:cfdi' => 'http://www.sat.gob.mx/cfd/3',
-                'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
-                'Version' => '3.3',
-                'Serie' => $serie,
-                'Folio' => $folio,
-                'Fecha' => $fechaFactura,
-                'Sello' => '',
-                'NoCertificado' => $noCertificado,
-                'Certificado' => '',
-                'SubTotal' => '',
-                'Moneda' => $moneda,
-                'Total' => '',
-                'TipoDeComprobante' => $tipoComprobante,
-                'FormaPago' => $formaPago,
-                'MetodoPago' => $metodoPago,
-                'TipoCambio' => $tipoCambio,
-                'LugarExpedicion' => $lugarExpedicion,
-            ],
-            'cfdi:Emisor' => [
-                '@attributes' => [
-                    'Rfc' => $perfil->getRfc(),
-                    'Nombre' => $perfil->getRazonSocial(),
-                    // 'RegimenFiscal' => "601",
-                    'RegimenFiscal' => $perfil->getNumeroRegimen(),
-                ],
-            ],
-            'cfdi:Receptor' => [
-                '@attributes' => [
-                    'Rfc' => $userFactura->getPerfil()->getRfc(),
-                    'Nombre' => $userFactura->getPerfil()->getRazonSocial(),
-                    'UsoCFDI' => $usoCFDI,
-                ],
-            ],
-            'cfdi:Conceptos' => [
-            ],
-            'cfdi:Impuestos' => [
-                '@attributes' => [
-                    'TotalImpuestosRetenidos' => '',
-                    'TotalImpuestosTrasladados' => '',
-                ],
-            ],
-        ];
-
-        $xml = Array2XML::createXML('cfdi:Comprobante', $dataXml);
-        $conceptos = $xml->getElementsByTagName('cfdi:Conceptos')[0];
-
-        foreach ($data['conceptos'] as $conceptoData) {
-            $concepto = $xml->createElement('cfdi:Concepto');
-
-            $impuestos = $xml->createElement('cfdi:Impuestos');
-            $retenciones = $xml->createElement('cfdi:Retenciones');
-            $traslados = $xml->createElement('cfdi:Traslados');
-
-            $concepto->setAttribute('ClaveProdServ', $conceptoData['ClaveProdServ']);
-            $concepto->setAttribute('ClaveUnidad', $conceptoData['ClaveUnidad']);
-            $concepto->setAttribute('NoIdentificacion', $conceptoData['NoIdentificacion']);
-            $concepto->setAttribute('Cantidad', $conceptoData['Cantidad']);
-            $concepto->setAttribute('Unidad', $conceptoData['Unidad']);
-            $concepto->setAttribute('Descripcion', $conceptoData['Descripcion']);
-            $concepto->setAttribute('ValorUnitario', $conceptoData['ValorUnitario']);
-            $concepto->setAttribute('Importe', $conceptoData['Importe']);
-            $concepto->setAttribute('Descuento', $conceptoData['Descuento']);
-
-            foreach ($conceptoData['ImpuestosTrasladados'] as $trasladoData) {
-                $traslado = $xml->createElement('cfdi:Traslado');
-                $traslado->setAttribute('Base', $trasladoData['Base']);
-                $traslado->setAttribute('Impuesto', $trasladoData['Impuesto']);
-                $traslado->setAttribute('TipoFactor', 'Tasa');
-                $traslado->setAttribute('TasaOCuota', $trasladoData['TasaOCuota']);
-                $traslado->setAttribute('Importe', $trasladoData['Importe']);
-                $traslados->appendChild($traslado);
+        if (is_object($doc)) {
+            // Doctrine entity: a veces hay getPath()
+            if (method_exists($doc, 'getPath')) {
+                $p = (string) $doc->getPath();
             }
-
-            if ($traslados->childNodes->length > 0) {
-                $impuestos->appendchild($traslados);
+            // FC1: a veces es propiedad _path
+            if ($p === '' && property_exists($doc, '_path')) {
+                $p = (string) $doc->_path;
             }
-            if ($impuestos->childNodes->length > 0) {
-                $concepto->appendChild($impuestos);
+        }
+
+        if ($p !== '' && is_file($p)) {
+            return $p;
+        }
+
+        // 2) Fallback: uploads/users_documentos/<name>
+        $name = '';
+        if (is_object($doc)) {
+            if (method_exists($doc, 'getName')) {
+                $name = (string) $doc->getName();
+            } elseif (property_exists($doc, '_name')) {
+                $name = (string) $doc->_name;
             }
-
-            $conceptos->appendchild($concepto);
         }
 
-        $comprobante = $xml->getElementsByTagName('cfdi:Comprobante')[0];
-        $comprobante->setAttribute('Total', $data['Total']);
-        $comprobante->setAttribute('SubTotal', $data['SubTotal']);
-        $comprobante->setAttribute('Descuento', $data['Descuento']);
-
-        $impuestosSuma = $xml->getElementsByTagName('cfdi:Impuestos')[($xml->getElementsByTagName('cfdi:Impuestos')->length) - 1];
-        $impuestosSuma->setAttribute('TotalImpuestosRetenidos', $data['TotalImpuestosRetenidos']);
-        $impuestosSuma->setAttribute('TotalImpuestosTrasladados', $data['TotalImpuestosTrasladados']);
-
-        $retencionesSuma = $xml->createElement('cfdi:Retenciones');
-        $trasladosSuma = $xml->createElement('cfdi:Traslados');
-
-        foreach ($data['trasladosSuma'] as $trasladoSumaData) {
-            $trasladoSuma = $xml->createElement('cfdi:Traslado');
-            $trasladoSuma->setAttribute('Impuesto', $trasladoSumaData['Impuesto']);
-            $trasladoSuma->setAttribute('TipoFactor', $trasladoSumaData['TipoFactor']);
-            $trasladoSuma->setAttribute('TasaOCuota', $trasladoSumaData['TasaOCuota']);
-            $trasladoSuma->setAttribute('Importe', $trasladoSumaData['Importe']);
-            $trasladosSuma->appendChild($trasladoSuma);
+        if ($name === '') {
+            // si venía _path pero no existe, lo devolvemos para que el error muestre la ruta real
+            return $p;
         }
 
-        if ($trasladosSuma->childNodes->length > 0) {
-            $impuestosSuma->appendChild($trasladosSuma);
+        $fallback = 'uploads/users_documentos/' . ltrim($name, '/');
+        return $fallback;
+    };
+
+    $resolveKeyPemPath = function(string $keyPath): string {
+        // Si ya es PEM, úsalo
+        if (preg_match('/\.pem$/i', $keyPath)) {
+            return $keyPath;
         }
 
-        $keyFile = $user->getInfoFactura()->getDocumentByType(\App\Models\UsersInfoFacturaDocumentos::LLAVE);
-        $nombreKey = $keyFile->getName();
-        $extKey = pathinfo($nombreKey, PATHINFO_EXTENSION);
-        if ($extKey === 'key') {
-            $nombreKey .= '.pem';
-        }
-        $path = "uploads/users_documentos/";
-        $params = [
-            'xmlB64' => base64_encode($xml->saveXml()),
-            'keyPEMB64' => base64_encode(file_get_contents($path . $nombreKey)),
-        ];
+        // Caso típico tuyo: archivo.key -> archivo.key.pem
+        $cand1 = $keyPath . '.pem';
 
-        $response = self::generateSelloV33($params);
-        // $doc = $this->sellarXML($xml->saveXML(), $path . $cerFile->getName(), $path . $nombreKey);\
-        // dump(base64_encode($doc), $doc);die;
-        $domDoc = new \DomDocument();
-        $domDoc->loadXML($xml->saveXml()) or die("XML invalido");
-        $c = $domDoc->getElementsByTagNameNS('http://www.sat.gob.mx/cfd/3', 'Comprobante')->item(0); 
-        $c->setAttribute('Sello', $response->sello);
-        $certificado = str_replace(array('\n', '\r'), '', base64_encode(file_get_contents($path . $cerFile->getName())));
-        $c->setAttribute('Certificado', $certificado);
-        $doc = $domDoc->savexml();
+        // Fallback: archivo.key -> archivo.pem
+        $cand2 = preg_replace('/\.key$/i', '.pem', $keyPath);
 
-        $params = [
-            'cfdiB64' => base64_encode($doc),
-        ];
+        if (is_file($cand1)) return $cand1;
+        if (is_file($cand2)) return $cand2;
 
-        $response = self::callTimbrarCFDI($params);
-        if (is_string($response)) {
-            return false;
-        }
+        // Si ninguno existe, regresamos cand1 para que el error diga qué esperaba
+        return $cand1;
+    };
 
-        switch ($response->codRetorno) {
-            case 200:
-                $logo = 'null';
-                if (!empty($user->getLogo()) && file_exists('uploads/users_logos/thumbnails/' . $user->getLogo()->getName())) {
-                    $logo = base64_encode(file_get_contents('uploads/users_logos/thumbnails/' . $user->getLogo()->getName()));
-                }
-                $params = [
-                    'xmlB64' => base64_encode($response->cfdiTimbrado),
-                    'plantilla' => 1,
-                    'json' => 'null',
-                    'logo' => base64_encode(file_get_contents('uploads/users_logos/thumbnails/' . $user->getLogo()->getName())),
-                ];
+    // -----------------------------
+    // Tu código original (con paths corregidos)
+    // -----------------------------
 
-                $attachments = [];
-                $pdfResponse = self::generatePDFV33($params);
-                if ($pdfResponse->code === "210") {
-                    $pdf = $pdfResponse->pdf;
-                    $attachments["{$response->uuid}.pdf"] = base64_decode($pdf);
-                }
+    $cerFile = $user->getInfoFactura()->getDocumentByType(App\Models\UsersInfoFacturaDocumentos::CERTIFICADO);
 
-                $attachments = [ "{$response->uuid}.xml" => $response->cfdiTimbrado ];
-                $dataEmail = [];
-                $email = $data['email'];
-                $title = 'Factura generada';
-                \Mail::send('emails.facturacion.factura_generada', $dataEmail, function($message) use ($email, $title, $attachments) {
-                    $message->from('info@factucare.com', 'Factucare');
-                    $message->subject($title);
-                    $message->to($email, $email);
-                    foreach ($attachments as $nameFile => $attach) {
-                        $message->attachData($attach, $nameFile);
-                    }
-                });
-                return [ 'xml' => $response->cfdiTimbrado ];
-                break;
-            default:
-                return false;
-        }
+    $fechaFactura = new Carbon();
+    $diasDiferencia = $fechaFactura->diffInDays(Carbon::now());
+    if ($diasDiferencia > 3) {
+        Flash::error('Factura fuera de fecha');
+        return redirect()->action('Users\FacturasV33Controller@getIndex');
     }
+
+    $tipoDocumento = strtolower(App\Models\Facturas::getTipoDocumento('FACTURA'));
+    $f = $user->getFolioByTipo(App\Models\Facturas::getTipoDocumento('FACTURA'));
+    if (empty($f)) {
+        Flash::error('No existe un folio configurado para ese tipo de Documento');
+        return redirect()->action('Users\FacturasV33Controller@getIndex');
+    }
+
+    $serie = $f->getSerie();
+    $folio = $f->getFolio();
+    $fechaFactura = $fechaFactura->format('Y-m-d\TH:i:s');
+    $noCertificado = $cerFile->getNumeroCertificado();
+    $moneda = 'MXN';
+    $tipoComprobante = 'I';
+    $formaPago = '04';
+    $metodoPago = 'PUE';
+    $tipoCambio = '1.0';
+    $usoCFDI = 'G03';
+    $perfil = $user->getPerfil();
+    $lugarExpedicion = $perfil->getCodigoPostal();
+
+    $dataXml = [
+        '@attributes' => [
+            'xsi:schemaLocation' => 'http://www.sat.gob.mx/cfd/3 http://www.sat.gob.mx/sitio_internet/cfd/3/cfdv33.xsd',
+            'xmlns:cfdi' => 'http://www.sat.gob.mx/cfd/3',
+            'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
+            'Version' => '3.3',
+            'Serie' => $serie,
+            'Folio' => $folio,
+            'Fecha' => $fechaFactura,
+            'Sello' => '',
+            'NoCertificado' => $noCertificado,
+            'Certificado' => '',
+            'SubTotal' => '',
+            'Moneda' => $moneda,
+            'Total' => '',
+            'TipoDeComprobante' => $tipoComprobante,
+            'FormaPago' => $formaPago,
+            'MetodoPago' => $metodoPago,
+            'TipoCambio' => $tipoCambio,
+            'LugarExpedicion' => $lugarExpedicion,
+        ],
+        'cfdi:Emisor' => [
+            '@attributes' => [
+                'Rfc' => $perfil->getRfc(),
+                'Nombre' => $perfil->getRazonSocial(),
+                'RegimenFiscal' => $perfil->getNumeroRegimen(),
+            ],
+        ],
+        'cfdi:Receptor' => [
+            '@attributes' => [
+                'Rfc' => $userFactura->getPerfil()->getRfc(),
+                'Nombre' => $userFactura->getPerfil()->getRazonSocial(),
+                'UsoCFDI' => $usoCFDI,
+            ],
+        ],
+        'cfdi:Conceptos' => [],
+        'cfdi:Impuestos' => [
+            '@attributes' => [
+                'TotalImpuestosRetenidos' => '',
+                'TotalImpuestosTrasladados' => '',
+            ],
+        ],
+    ];
+
+    $xml = Array2XML::createXML('cfdi:Comprobante', $dataXml);
+    $conceptos = $xml->getElementsByTagName('cfdi:Conceptos')[0];
+
+    foreach ($data['conceptos'] as $conceptoData) {
+        $concepto = $xml->createElement('cfdi:Concepto');
+
+        $impuestos = $xml->createElement('cfdi:Impuestos');
+        $retenciones = $xml->createElement('cfdi:Retenciones');
+        $traslados = $xml->createElement('cfdi:Traslados');
+
+        $concepto->setAttribute('ClaveProdServ', $conceptoData['ClaveProdServ']);
+        $concepto->setAttribute('ClaveUnidad', $conceptoData['ClaveUnidad']);
+        $concepto->setAttribute('NoIdentificacion', $conceptoData['NoIdentificacion']);
+        $concepto->setAttribute('Cantidad', $conceptoData['Cantidad']);
+        $concepto->setAttribute('Unidad', $conceptoData['Unidad']);
+        $concepto->setAttribute('Descripcion', $conceptoData['Descripcion']);
+        $concepto->setAttribute('ValorUnitario', $conceptoData['ValorUnitario']);
+        $concepto->setAttribute('Importe', $conceptoData['Importe']);
+        $concepto->setAttribute('Descuento', $conceptoData['Descuento']);
+
+        foreach ($conceptoData['ImpuestosTrasladados'] as $trasladoData) {
+            $traslado = $xml->createElement('cfdi:Traslado');
+            $traslado->setAttribute('Base', $trasladoData['Base']);
+            $traslado->setAttribute('Impuesto', $trasladoData['Impuesto']);
+            $traslado->setAttribute('TipoFactor', 'Tasa');
+            $traslado->setAttribute('TasaOCuota', $trasladoData['TasaOCuota']);
+            $traslado->setAttribute('Importe', $trasladoData['Importe']);
+            $traslados->appendChild($traslado);
+        }
+
+        if ($traslados->childNodes->length > 0) {
+            $impuestos->appendchild($traslados);
+        }
+        if ($impuestos->childNodes->length > 0) {
+            $concepto->appendChild($impuestos);
+        }
+
+        $conceptos->appendchild($concepto);
+    }
+
+    $comprobante = $xml->getElementsByTagName('cfdi:Comprobante')[0];
+    $comprobante->setAttribute('Total', $data['Total']);
+    $comprobante->setAttribute('SubTotal', $data['SubTotal']);
+    $comprobante->setAttribute('Descuento', $data['Descuento']);
+
+    $impuestosSuma = $xml->getElementsByTagName('cfdi:Impuestos')[($xml->getElementsByTagName('cfdi:Impuestos')->length) - 1];
+    $impuestosSuma->setAttribute('TotalImpuestosRetenidos', $data['TotalImpuestosRetenidos']);
+    $impuestosSuma->setAttribute('TotalImpuestosTrasladados', $data['TotalImpuestosTrasladados']);
+
+    $retencionesSuma = $xml->createElement('cfdi:Retenciones');
+    $trasladosSuma = $xml->createElement('cfdi:Traslados');
+
+    foreach ($data['trasladosSuma'] as $trasladoSumaData) {
+        $trasladoSuma = $xml->createElement('cfdi:Traslado');
+        $trasladoSuma->setAttribute('Impuesto', $trasladoSumaData['Impuesto']);
+        $trasladoSuma->setAttribute('TipoFactor', $trasladoSumaData['TipoFactor']);
+        $trasladoSuma->setAttribute('TasaOCuota', $trasladoSumaData['TasaOCuota']);
+        $trasladoSuma->setAttribute('Importe', $trasladoSumaData['Importe']);
+        $trasladosSuma->appendChild($trasladoSuma);
+    }
+
+    if ($trasladosSuma->childNodes->length > 0) {
+        $impuestosSuma->appendChild($trasladosSuma);
+    }
+
+    // -----------------------------
+    // ✅ AQUI: PATHS CORREGIDOS (CER/KEY)
+    // -----------------------------
+
+    $keyFile = $user->getInfoFactura()->getDocumentByType(\App\Models\UsersInfoFacturaDocumentos::LLAVE);
+
+    // Resolver rutas reales
+    $cerPath = $resolveDocPath($cerFile);
+    $keyPath = $resolveDocPath($keyFile);
+    $keyPemPath = $resolveKeyPemPath($keyPath);
+
+    if (!is_file($cerPath)) {
+        Flash::error("No se encontró el CERTIFICADO (.cer) en: {$cerPath}");
+        return redirect()->action('Users\FacturasV33Controller@getIndex');
+    }
+    if (!is_file($keyPemPath)) {
+        Flash::error("No se encontró la LLAVE (.pem) en: {$keyPemPath}");
+        return redirect()->action('Users\FacturasV33Controller@getIndex');
+    }
+
+    // Generar sello
+    $params = [
+        'xmlB64'     => base64_encode($xml->saveXml()),
+        'keyPEMB64'  => base64_encode(file_get_contents($keyPemPath)),
+    ];
+
+    $response = self::generateSelloV33($params);
+
+    $domDoc = new \DomDocument();
+    $domDoc->loadXML($xml->saveXml()) or die("XML invalido");
+    $c = $domDoc->getElementsByTagNameNS('http://www.sat.gob.mx/cfd/3', 'Comprobante')->item(0);
+
+    $c->setAttribute('Sello', $response->sello);
+
+    // Certificado desde la ruta real
+    $certificado = str_replace(["\n", "\r"], '', base64_encode(file_get_contents($cerPath)));
+    $c->setAttribute('Certificado', $certificado);
+
+    $doc = $domDoc->savexml();
+
+    $params = [
+        'cfdiB64' => base64_encode($doc),
+    ];
+
+    $response = self::callTimbrarCFDI($params);
+    if (is_string($response)) {
+        return false;
+    }
+
+    switch ($response->codRetorno) {
+        case 200:
+            $logo = 'null';
+            if (!empty($user->getLogo()) && file_exists('uploads/users_logos/thumbnails/' . $user->getLogo()->getName())) {
+                $logo = base64_encode(file_get_contents('uploads/users_logos/thumbnails/' . $user->getLogo()->getName()));
+            }
+            $params = [
+                'xmlB64' => base64_encode($response->cfdiTimbrado),
+                'plantilla' => 1,
+                'json' => 'null',
+                'logo' => base64_encode(file_get_contents('uploads/users_logos/thumbnails/' . $user->getLogo()->getName())),
+            ];
+
+            $attachments = [];
+            $pdfResponse = self::generatePDFV33($params);
+            if ($pdfResponse->code === "210") {
+                $pdf = $pdfResponse->pdf;
+                $attachments["{$response->uuid}.pdf"] = base64_decode($pdf);
+            }
+
+            $attachments = [ "{$response->uuid}.xml" => $response->cfdiTimbrado ];
+            $dataEmail = [];
+            $email = $data['email'];
+            $title = 'Factura generada';
+            \Mail::send('emails.facturacion.factura_generada', $dataEmail, function($message) use ($email, $title, $attachments) {
+                $message->from('info@factucare.com', 'Factucare');
+                $message->subject($title);
+                $message->to($email, $email);
+                foreach ($attachments as $nameFile => $attach) {
+                    $message->attachData($attach, $nameFile);
+                }
+            });
+            return [ 'xml' => $response->cfdiTimbrado ];
+            break;
+        default:
+            return false;
+    }
+}
+
 }
 
 ?>

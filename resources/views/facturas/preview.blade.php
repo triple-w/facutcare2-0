@@ -147,8 +147,8 @@
       </div>
     </div>
   </div>
-  <pre class="text-xs overflow-auto max-h-96 bg-gray-50 p-3 rounded">
-{{ json_encode(session('factura_draft'), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}
+ <pre class="text-xs overflow-auto max-h-96 bg-gray-50 p-3 rounded">
+ {{ json_encode(session('factura_draft'), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}
 </pre>
 </div>
 @endsection

@@ -111,7 +111,7 @@
             <span x-show="!isSubmitting">Previsualizar</span>
             <span x-show="isSubmitting">Generando…</span>
           </button>
-          <button type="button"
+          <!-- <button type="button"
                     class="btn border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-200"
                     @click="guardarBorrador()">
               Guardar borrador
@@ -122,7 +122,7 @@
                     @click="timbrar()"
                     :disabled="isSubmitting">
               Timbrar
-            </button>
+            </button> -->
         </div>
       </div>
 
@@ -634,6 +634,13 @@
         </div>
       </div>
     </div>
+    <button type="button"
+                  class="btn bg-violet-600 hover:bg-violet-700 text-white"
+                  @click="previsualizar()"
+                  :disabled="isSubmitting">
+            <span x-show="!isSubmitting">Previsualizar</span>
+            <span x-show="isSubmitting">Generando…</span>
+          </button>
 
     {{-- MODAL SAT --}}
     <div x-show="satModal.open" style="display:none" class="fixed inset-0 z-50">
