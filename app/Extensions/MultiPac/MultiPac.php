@@ -213,61 +213,89 @@ class MultiPac {
     // Helpers locales (solo para esta función)
     // -----------------------------
     $resolveDocPath = function($doc): string {
-        // 1) Preferir _path / getPath si existe
-        $p = '';
+        $pathDb = '';
+        $name   = '';
 
         if (is_object($doc)) {
-            // Doctrine entity: a veces hay getPath()
             if (method_exists($doc, 'getPath')) {
-                $p = (string) $doc->getPath();
+                $pathDb = (string)$doc->getPath();
+            } elseif (property_exists($doc, '_path')) {
+                $pathDb = (string)$doc->_path;
             }
-            // FC1: a veces es propiedad _path
-            if ($p === '' && property_exists($doc, '_path')) {
-                $p = (string) $doc->_path;
-            }
-        }
 
-        if ($p !== '' && is_file($p)) {
-            return $p;
-        }
-
-        // 2) Fallback: uploads/users_documentos/<name>
-        $name = '';
-        if (is_object($doc)) {
             if (method_exists($doc, 'getName')) {
-                $name = (string) $doc->getName();
+                $name = (string)$doc->getName();
             } elseif (property_exists($doc, '_name')) {
-                $name = (string) $doc->_name;
+                $name = (string)$doc->_name;
             }
         }
 
-        if ($name === '') {
-            // si venía _path pero no existe, lo devolvemos para que el error muestre la ruta real
+        $pathDb = trim($pathDb);
+
+        // Normaliza: si es relativo -> public_path()
+        $normalize = function(string $p): string {
+            $p = trim($p);
+            if ($p === '') return $p;
+
+            // absoluto Linux (/...) o Windows (C:\...)
+            if ($p[0] === '/' || preg_match('/^[A-Za-z]:\\\\/', $p)) {
+                return $p;
+            }
+
+            return public_path(ltrim($p, "/\\"));
+        };
+
+        // 1) Si _path existe como archivo, úsalo
+        if ($pathDb !== '') {
+            $p = $normalize($pathDb);
+
+            if (is_file($p)) {
+                return $p;
+            }
+
+            // 2) Si _path era carpeta/base, intenta _path/_name (sin duplicar)
+            if ($name !== '') {
+                if (basename($p) !== $name) {
+                    $cand = rtrim($p, "/\\") . DIRECTORY_SEPARATOR . $name;
+                    if (is_file($cand)) return $cand;
+                }
+            }
+
+            // si no existió, regresa el path normalizado para que el error sea claro
             return $p;
         }
 
-        $fallback = 'uploads/users_documentos/' . ltrim($name, '/');
+        // 3) Sin _path: fallback por nombre, pero ABSOLUTO
+        if ($name === '') {
+            return '';
+        }
+
+        $fallback = public_path('uploads/users_documentos' . DIRECTORY_SEPARATOR . $name);
         return $fallback;
     };
 
+
     $resolveKeyPemPath = function(string $keyPath): string {
-        // Si ya es PEM, úsalo
+        $keyPath = trim($keyPath);
+        if ($keyPath === '') return $keyPath;
+
+        // si ya es pem
         if (preg_match('/\.pem$/i', $keyPath)) {
             return $keyPath;
         }
 
-        // Caso típico tuyo: archivo.key -> archivo.key.pem
+        // tu caso real en server: archivo.key.pem
         $cand1 = $keyPath . '.pem';
 
-        // Fallback: archivo.key -> archivo.pem
+        // fallback: archivo.key -> archivo.pem
         $cand2 = preg_replace('/\.key$/i', '.pem', $keyPath);
 
         if (is_file($cand1)) return $cand1;
         if (is_file($cand2)) return $cand2;
 
-        // Si ninguno existe, regresamos cand1 para que el error diga qué esperaba
-        return $cand1;
+        return $cand1; // para mostrar qué esperaba
     };
+
 
     // -----------------------------
     // Tu código original (con paths corregidos)
