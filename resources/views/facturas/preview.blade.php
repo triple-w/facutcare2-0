@@ -4,25 +4,54 @@
 
 @section('content')
 <div class="px-6 py-6 w-full max-w-7xl mx-auto">
-  <div class="flex justify-between items-center mb-6">
-    <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Previsualización de factura</h1>
-    <a href="{{ route('facturas.create') }}"
-       class="btn bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200">
-      ← Volver a editar
-    </a>
-    <button type="button"
-          class="btn border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-200"
-          onclick="alert('Guardar borrador: pendiente');">
-    Guardar borrador
-  </button>
+    @if(session('error'))
+    <div class="mb-4 p-3 rounded bg-red-100 text-red-800">
+        {{ session('error') }}
+    </div>
+    @endif
 
-  <form method="POST" action="{{ route('facturas.timbrar') }}">
-    @csrf
-    <button type="submit"
-            class="btn bg-emerald-600 hover:bg-emerald-700 text-white">
-      Timbrar
-    </button>
-  </div>
+    @if(session('success'))
+    <div class="mb-4 p-3 rounded bg-green-100 text-green-800">
+        {{ session('success') }}
+    </div>
+    @endif
+
+  <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Previsualización de factura</h1>
+            <div class="flex gap-2 items-center">
+            <a href="{{ route('facturas.create') }}"
+            class="btn bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200">
+                ← Volver a editar
+            </a>
+
+            <button type="button"
+                    class="btn border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-200"
+                    onclick="alert('Guardar borrador: pendiente');">
+                Guardar borrador
+            </button>
+
+            {{-- DEBUG XML: form propio para abrir en nueva pestaña --}}
+            <form method="POST" action="{{ route('facturas.timbrar') }}" target="_blank">
+                @csrf
+                <input type="hidden" name="modo" value="debug">
+                <button type="submit"
+                        class="btn border-gray-200 dark:border-gray-700/60 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-200">
+                    Ver XML (debug)
+                </button>
+            </form>
+
+            {{-- TIMBRAR: form propio (redirect normal) --}}
+            <form method="POST" action="{{ route('facturas.timbrar') }}">
+                @csrf
+                <input type="hidden" name="modo" value="timbrar">
+                <button type="submit" class="btn btn-primary">
+                    Timbrar
+                </button>
+            </form>
+        </div>
+
+    </div>
+
   
   {{-- Datos generales --}}
   <div class="bg-white dark:bg-gray-800 shadow rounded-lg p-6 mb-6">
@@ -118,5 +147,8 @@
       </div>
     </div>
   </div>
+  <pre class="text-xs overflow-auto max-h-96 bg-gray-50 p-3 rounded">
+{{ json_encode(session('factura_draft'), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}
+</pre>
 </div>
 @endsection

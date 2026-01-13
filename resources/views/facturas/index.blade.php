@@ -31,7 +31,7 @@
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-gray-600">
                             <tr>
-                                <th class="px-4 py-3 text-left">Comprobante</th>
+                                <th class="px-4 py-3 text-left">Folio</th>
                                 <th class="px-4 py-3 text-left">Tipo</th>
                                 <th class="px-4 py-3 text-left">Cliente</th>
                                 <th class="px-4 py-3 text-left">Estatus</th>
@@ -42,7 +42,17 @@
                         <tbody class="divide-y">
                             @forelse($facturas as $f)
                                 <tr>
-                                    <td class="px-4 py-3 font-medium">{{ $f->nombre_comprobante }}</td>
+                                    @php
+                                    $folioTxt = trim(($f->serie ?? '') . ($f->folio ?? ''));
+                                    if ($folioTxt === '') {
+      // fallback por si todavía no guardas serie/folio en DB
+      $folioTxt = $f->uuid ? ('UUID ' . substr($f->uuid, 0, 8) . '…') : ('#' . $f->id);
+  }
+                                    @endphp
+
+                                    <td class="px-4 py-3 whitespace-nowrap">
+                                    <div class="font-medium text-gray-900 dark:text-gray-100">{{ $folioTxt }}</div>
+                                    </td>
                                     <td class="px-4 py-3">{{ $f->tipo_comprobante }}</td>
                                     <td class="px-4 py-3">{{ $f->razon_social }}<div class="text-xs text-gray-500">{{ $f->rfc }}</div></td>
                                     <td class="px-4 py-3">{{ $f->estatus }}</td>
@@ -119,22 +129,18 @@
                                                 </button>
                                             </form>
 
-                                            {{-- CANCELAR (si quieres mostrarla solo cuando TIMBRADA) --}}
+                                            {{-- CANCELAR (solo cuando TIMBRADA) --}}
                                             @if(strtoupper((string)$f->estatus) === 'TIMBRADA')
-                                                <form class="inline" method="POST" action="{{ route('facturas.cancelar', $f->id) }}">
-                                                    @csrf
-                                                    <button type="submit"
-                                                            title="Cancelar"
-                                                            onclick="return confirm('¿Seguro de cancelar la factura?');"
-                                                            class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400">
-                                                        <span class="sr-only">Cancelar</span>
-                                                        {{-- Ban icon --}}
-                                                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                                d="M18.364 5.636l-12.728 12.728M6.343 6.343a9 9 0 1012.728 12.728A9 9 0 006.343 6.343z"/>
-                                                        </svg>
-                                                    </button>
-                                                </form>
+                                                <button type="button"
+                                                        title="Cancelar"
+                                                        onclick="openCancelModal(event, {{ $f->id }})"
+                                                        class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400">
+                                                    <span class="sr-only">Cancelar</span>
+                                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                            d="M18.364 5.636l-12.728 12.728M6.343 6.343a9 9 0 1012.728 12.728A9 9 0 006.343 6.343z"/>
+                                                    </svg>
+                                                </button>
                                             @endif
                                         </div>
                                     </td>
@@ -145,6 +151,86 @@
                             @endforelse
                         </tbody>
                     </table>
+                    {{-- Modal Cancelación --}}
+                    <div id="cancelModal" class="fixed inset-0 z-50 hidden">
+                    <div class="absolute inset-0 bg-black/50" onclick="closeCancelModal()"></div>
+
+                    <div class="relative mx-auto mt-24 w-[95%] max-w-lg rounded-xl bg-white dark:bg-gray-800 shadow-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Cancelar CFDI</h3>
+                        <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
+                        Selecciona el motivo de cancelación (SAT).
+                        </p>
+
+                        <form id="cancelForm" method="POST" class="mt-4">
+                        @csrf
+
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">Motivo</label>
+                        <select name="motivo" id="cancelMotivo"
+                                class="w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700"
+                                onchange="toggleFolioSustitucion()"
+                                required>
+                            <option value="">Selecciona…</option>
+                            <option value="01">01 - Comprobantes emitidos con errores con relación</option>
+                            <option value="02">02 - Comprobantes emitidos con errores sin relación</option>
+                            <option value="03">03 - No se llevó a cabo la operación</option>
+                            <option value="04">04 - Operación nominativa relacionada en una factura global</option>
+                        </select>
+
+                        <div id="folioSustBox" class="mt-4 hidden">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
+                            UUID sustitución (solo motivo 04)
+                            </label>
+                            <input type="text" name="folioSustitucion" id="folioSustInput"
+                                class="w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700"
+                                placeholder="UUID que sustituye al cancelado">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Si motivo = 04, este campo es obligatorio.
+                            </p>
+                        </div>
+
+                        <div class="mt-6 flex items-center justify-between">
+                            <button type="button"
+                                    class="btn bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200"
+                                    onclick="closeCancelModal()">
+                            Cerrar
+                            </button>
+
+                            <button type="submit"
+                                    class="btn bg-red-500 hover:bg-red-600 text-white">
+                            Cancelar documento
+                            </button>
+                        </div>
+                        </form>
+                    </div>
+                    </div>
+                    <script>
+                        function openCancelModal(e, id) {
+                            if (e) { e.preventDefault(); e.stopPropagation(); }
+
+                            const modal = document.getElementById('cancelModal');
+                            const form  = document.getElementById('cancelForm');
+
+                            form.action = `{{ url('/documentos/facturas') }}/${id}/cancelar`;
+
+                            document.getElementById('cancelMotivo').value = '';
+                            document.getElementById('folioSustInput').value = '';
+                            document.getElementById('folioSustBox').classList.add('hidden');
+
+                            modal.classList.remove('hidden');
+                        }
+
+                        function closeCancelModal() {
+                            document.getElementById('cancelModal').classList.add('hidden');
+                        }
+
+                        function toggleFolioSustitucion() {
+                            const motivo = document.getElementById('cancelMotivo').value;
+                            const box = document.getElementById('folioSustBox');
+                            box.classList.toggle('hidden', motivo !== '04');
+                        }
+                        </script>
+
+
                 </div>
                 <div class="p-4">{{ $facturas->links() }}</div>
             </div>

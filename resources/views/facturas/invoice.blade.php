@@ -9,6 +9,17 @@
                         #{{ $factura->id }}
                     @endif
                 </div>
+                    @if(session('ok'))
+                    <div class="p-3 rounded bg-green-50 text-green-700 text-sm mb-4">
+                        {{ session('ok') }}
+                    </div>
+                @endif
+
+                @if(session('error'))
+                    <div class="p-3 rounded bg-red-50 text-red-700 text-sm mb-4">
+                        {{ session('error') }}
+                    </div>
+                @endif
                 <div class="text-sm text-gray-500 mt-1">
                     UUID: <span class="font-mono">{{ $cfdi['uuid'] ?? ($factura->uuid ?? '—') }}</span>
                 </div>
