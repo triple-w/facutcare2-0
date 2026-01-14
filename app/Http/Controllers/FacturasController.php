@@ -13,29 +13,167 @@ class FacturasController extends Controller
     public function index(Request $request)
     {
         $userId = auth()->id();
+
+        $perPage = 300;
         $q = trim((string) $request->get('q', ''));
 
         $facturas = DB::table('facturas as f')
             ->where('f.users_id', $userId)
-            ->when($q !== '', function ($query) use ($q) {
-                $query->where(function ($qq) use ($q) {
-                    $qq->where('f.razon_social', 'like', "%{$q}%")
-                        ->orWhere('f.rfc', 'like', "%{$q}%")
-                        ->orWhere('f.uuid', 'like', "%{$q}%")
-                        ->orWhere('f.nombre_comprobante', 'like', "%{$q}%")
-                        ->orWhere('f.estatus', 'like', "%{$q}%");
-                });
-            })
             ->select([
                 'f.*',
                 DB::raw('(SELECT COUNT(*) FROM factura_detalles d WHERE d.users_facturas_id = f.id) as detalles_count'),
             ])
             ->orderByDesc('f.id')
-            ->paginate(20)
+            ->paginate($perPage)
             ->withQueryString();
+
+        // ✅ AQUÍ ESTABA EL FALTANTE: hidratar la página actual del paginator
+        $items = $facturas->getCollection();              // Collection de stdClass
+        $items = $this->hidratarFacturasDesdeXml($items); // regresa Collection también
+        $facturas->setCollection($items);
+
+        // ✅ Si es AJAX, regresamos solo filas + meta
+        if ($request->ajax()) {
+            $rowsHtml = view('facturas.partials.rows', compact('facturas'))->render();
+
+            return response()->json([
+                'rows_html' => $rowsHtml,
+                'meta' => [
+                    'current_page' => $facturas->currentPage(),
+                    'last_page'    => $facturas->lastPage(),
+                    'total'        => $facturas->total(),
+                    'per_page'     => $facturas->perPage(),
+                    'count'        => $facturas->count(),
+                ],
+            ]);
+        }
 
         return view('facturas.index', compact('facturas', 'q'));
     }
+
+
+
+    public function indexChunk(Request $request)
+    {
+        $userId = auth()->id();
+
+        $limit  = min(300, max(1, (int)$request->query('limit', 300)));
+        $offset = max(0, (int)$request->query('offset', 0));
+
+        $query = DB::table('facturas as f')
+            ->where('f.users_id', $userId)
+            ->select(['f.*'])
+            ->orderByDesc('f.id');
+
+        $rows = $query->skip($offset)->take($limit)->get();
+        $facturas = $this->hidratarFacturasDesdeXml($rows);
+
+        $html = view('facturas._rows', compact('facturas'))->render();
+
+        return response()->json([
+            'html' => $html,
+            'next_offset' => $offset + $limit,
+            'count' => count($facturas),
+        ]);
+    }
+
+    private function hidratarFacturasDesdeXml($rows)
+    {
+        // Acepta Collection o array/iterable
+        if ($rows instanceof \Illuminate\Support\Collection) {
+            $items = $rows;
+        } else {
+            $items = collect($rows);
+        }
+
+        foreach ($items as $f) {
+            $needs = empty($f->serie) || empty($f->folio) || empty($f->total) || empty($f->fecha) || empty($f->uuid);
+
+            if ($needs && !empty($f->xml)) {
+                try {
+                    $xml = (string)$f->xml;
+
+                    // (Opcional pero útil) si tu BD guarda el xml en base64 en algunos casos:
+                    // si no parece xml, intenta base64_decode.
+                    if (strpos($xml, '<') === false) {
+                        $dec = base64_decode($xml, true);
+                        if ($dec !== false && strpos($dec, '<') !== false) {
+                            $xml = $dec;
+                        }
+                    }
+
+                    $meta = $this->parseCfdiBasicsFromXml($xml);
+
+                    if (empty($f->serie) && !empty($meta['serie'])) $f->serie = $meta['serie'];
+                    if (empty($f->folio) && !empty($meta['folio'])) $f->folio = $meta['folio'];
+
+                    if ((empty($f->total) || (float)$f->total <= 0) && isset($meta['total'])) {
+                        $f->total = (float)$meta['total'];
+                    }
+
+                    if (empty($f->fecha) && !empty($meta['fecha'])) $f->fecha = $meta['fecha'];
+                    if (empty($f->uuid)  && !empty($meta['uuid']))  $f->uuid  = $meta['uuid'];
+
+                } catch (\Throwable $e) {
+                    // no romper listado
+                }
+            }
+        }
+
+        return $items;
+    }
+
+
+
+
+
+    private function parseCfdiBasicsFromXml(string $xmlString): array
+    {
+        $out = [
+            'serie' => '',
+            'folio' => '',
+            'total' => 0,
+            'fecha' => '',
+            'uuid'  => '',
+        ];
+
+        $xmlString = trim($xmlString);
+        if ($xmlString === '') return $out;
+
+        libxml_use_internal_errors(true);
+
+        $dom = new \DOMDocument();
+        if (!$dom->loadXML($xmlString, LIBXML_NONET)) {
+            return $out;
+        }
+
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('cfdi3', 'http://www.sat.gob.mx/cfd/3');
+        $xp->registerNamespace('cfdi4', 'http://www.sat.gob.mx/cfd/4');
+        $xp->registerNamespace('tfd',   'http://www.sat.gob.mx/TimbreFiscalDigital');
+
+        // CFDI 4.0 o 3.3
+        $comp = $xp->query('//cfdi4:Comprobante | //cfdi3:Comprobante')->item(0);
+        if ($comp) {
+            $out['serie'] = $comp->getAttribute('Serie') ?: $comp->getAttribute('serie');
+            $out['folio'] = $comp->getAttribute('Folio') ?: $comp->getAttribute('folio');
+
+            $totalRaw = $comp->getAttribute('Total') ?: $comp->getAttribute('total');
+            $totalRaw = str_replace([',', ' '], '', (string)$totalRaw);
+            $out['total'] = (float)$totalRaw;
+
+            $out['fecha'] = $comp->getAttribute('Fecha') ?: $comp->getAttribute('fecha');
+        }
+
+        // UUID (TimbreFiscalDigital)
+        $tfd = $xp->query('//tfd:TimbreFiscalDigital')->item(0);
+        if ($tfd) {
+            $out['uuid'] = $tfd->getAttribute('UUID') ?: $tfd->getAttribute('uuid');
+        }
+
+        return $out;
+    }
+
 
     private function getRfcActivo(): ?string
     {
@@ -237,8 +375,31 @@ class FacturasController extends Controller
     return $out;
     }
 
+    /**
+     * Resuelve la ruta REAL del documento:
+     * 1) Si viene _path y existe en disco, úsalo tal cual.
+     * 2) Si no, intenta en public/uploads/users_documentos/_name.
+     */
+    private function resolveUsersDocumentoPath(object $doc): string
+    {
+        $p = (string)($doc->_path ?? '');
+        if ($p !== '' && is_file($p)) {
+            return $p;
+        }
 
+        $name = (string)($doc->_name ?? '');
+        if ($name === '') {
+            throw new \RuntimeException('Documento sin _name ni _path resoluble.');
+        }
 
+        $fallback = public_path('uploads/users_documentos' . DIRECTORY_SEPARATOR . $name);
+        if (is_file($fallback)) {
+            return $fallback;
+        }
+
+        // Último intento: si _path venía pero no existía, lo devolvemos para que el error muestre esa ruta
+        return $p !== '' ? $p : $fallback;
+    }
 
 
     private function normalizarFolioEnPayload(int $userId, array $payload): array

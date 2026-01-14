@@ -7,6 +7,7 @@ use App\Http\Controllers\ClientesController;
 use App\Http\Controllers\ProductosController;
 use App\Http\Controllers\FoliosController;
 use App\Http\Controllers\FacturasController;
+use App\Http\Controllers\ComplementosController;
 
 use App\Http\Controllers\Api\SeriesController;
 use App\Http\Controllers\Api\ProductosApiController;
@@ -53,23 +54,28 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::post('facturas/preview', [FacturasController::class, 'preview'])->name('facturas.preview');
         Route::get('facturas/preview', [FacturasController::class, 'previewGet'])->name('facturas.preview.get');
         Route::post('facturas/timbrar', [FacturasController::class, 'timbrar'])->name('facturas.timbrar');
-        
-
-
         //--nuevas rutas
-
         Route::get('/facturas/{id}/xml', [FacturasController::class, 'downloadXml'])->name('facturas.xml');
         Route::get('/facturas/{id}/pdf', [FacturasController::class, 'downloadPdf'])->name('facturas.pdf');
         Route::get('/facturas/{id}/ver', [FacturasController::class, 'show'])->name('facturas.ver');
-
-
         Route::get('/facturas/{id}/acuse', [FacturasController::class, 'downloadAcuse'])->name('facturas.acuse');
         Route::post('/facturas/{id}/regenerar-pdf', [FacturasController::class, 'regenerarPdf'])->name('facturas.regenerarPdf');
-
         Route::post('/facturas/{id}/cancelar', [FacturasController::class, 'cancelar'])->name('facturas.cancelar');
+        Route::get('/facturas/chunk', [FacturasController::class, 'indexChunk'])->name('facturas.indexChunk');
+        Route::get('/facturas/rows', [\App\Http\Controllers\Users\FacturasController::class, 'rows'])->name('facturas.rows');
 
-        // Complementos / Nóminas (placeholder)
-        Route::view('complementos', 'pages/coming-soon')->name('complementos.index');
+
+        // Complementos de pago
+        Route::get('complementos', [ComplementosController::class, 'index'])->name('complementos.index');
+        Route::get('complementos/nueva', [ComplementosController::class, 'nueva'])->name('complementos.nueva');
+        Route::get('complementos/create', [ComplementosController::class, 'create'])->name('complementos.create');
+        Route::post('complementos/preview', [ComplementosController::class, 'preview'])->name('complementos.preview');
+
+        // AJAX: facturas con saldo insoluto por cliente
+        Route::get('complementos/facturas-pendientes', [ComplementosController::class, 'facturasPendientes'])
+            ->name('complementos.facturasPendientes');
+
+
         Route::view('nominas', 'pages/coming-soon')->name('nominas.index');
 
 
