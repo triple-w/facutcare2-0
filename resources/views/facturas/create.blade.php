@@ -494,7 +494,7 @@
         </div>
       </div>
     </div>
-
+    <input type="hidden" name="debug_impuestos" value="1">
     {{-- DRAWER EDITAR CLIENTE --}}
     <div x-show="drawerClienteOpen" style="display:none" class="fixed inset-0 z-40">
       <div class="absolute inset-0 bg-black/40" @click="drawerClienteOpen=false"></div>
