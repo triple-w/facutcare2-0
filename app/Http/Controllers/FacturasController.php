@@ -252,12 +252,14 @@ class FacturasController extends Controller
         // ✅ folio normalizado
         $payload = $this->normalizarFolioEnPayload($userId, $payload);
 
+        $payload = $this->normalizarImpuestosEnPayload($payload);
+
         // ❌ quitamos paths (ya no lo metas al payload)
         // $payload['_debug_timbrado_paths'] = $this->debugTimbradoPaths($userId);
 
         // ✅ DEBUG COMPLETO de impuestos/conceptos (para detectar CFDI40221)
         $payload['_debug_impuestos'] = $this->debugImpuestosFromPayload($payload);
-
+        
         // guarda el draft para volver a editar / timbrar
         session()->put('factura_draft', $payload);
 
@@ -269,7 +271,61 @@ class FacturasController extends Controller
 
         return $this->renderPreviewFromPayload($payload);
     }
+    
 
+    
+    /**
+ * Si el concepto trae aplica_iva=true / iva_tasa=0.16 pero impuestos viene vacío,
+ * lo convierte a la estructura estándar que usa el timbrado/debug:
+ * impuestos[] = [{tipo:'T', impuesto:'IVA', factor:'Tasa', tasa:16}]
+ */
+private function normalizarImpuestosEnPayload(array $payload): array
+{
+    if (empty($payload['conceptos']) || !is_array($payload['conceptos'])) {
+        return $payload;
+    }
+
+    foreach ($payload['conceptos'] as $k => $c) {
+        $imps = $c['impuestos'] ?? [];
+
+        // si ya viene array con contenido, solo normalizamos tasa si viene 0.16
+        if (is_array($imps) && count($imps) > 0) {
+            foreach ($imps as $ik => $i) {
+                if (isset($i['tasa'])) {
+                    $t = (float)$i['tasa'];
+                    // si viene 0.16 -> convertir a 16
+                    if ($t > 0 && $t < 1) {
+                        $payload['conceptos'][$k]['impuestos'][$ik]['tasa'] = $t * 100;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // si NO viene impuestos pero sí flags de IVA
+        $aplicaIva = !empty($c['aplica_iva']);
+        $tasaRaw   = $c['iva_tasa'] ?? null;
+
+        if ($aplicaIva && $tasaRaw !== null) {
+            $t = (float)$tasaRaw;
+            // si viene 0.16 -> 16
+            $tasaPct = ($t > 0 && $t < 1) ? $t * 100 : $t;
+
+            $payload['conceptos'][$k]['impuestos'] = [[
+                'uid'      => $c['uid'] ?? ('iva_'.$k),
+                'tipo'     => 'T',        // Traslado
+                'impuesto' => 'IVA',      // lo mapeamos a 002 más adelante
+                'factor'   => 'Tasa',
+                'tasa'     => $tasaPct,   // 16
+            ]];
+        } else {
+            // garantizar array para evitar nulls
+            $payload['conceptos'][$k]['impuestos'] = [];
+        }
+    }
+
+    return $payload;
+}
 
 
 
