@@ -941,6 +941,50 @@ class FacturasController extends Controller
         ]);
     }
 
+    private function resolveUsersDocumentoPathFromRow(object $doc): string
+    {
+        $p = trim((string)($doc->_path ?? ''));
+
+        // si viene absoluto y existe, úsalo
+        if ($p !== '' && is_file($p)) {
+            return $p;
+        }
+
+        // si viene relativo, conviértelo a public_path
+        if ($p !== '' && ($p[0] !== '/' && !preg_match('/^[A-Za-z]:\\\\/', $p))) {
+            $cand = public_path(ltrim($p, "/\\"));
+            if (is_file($cand)) return $cand;
+        }
+
+        // fallback por nombre en public/uploads/users_documentos
+        $name = trim((string)($doc->_name ?? ''));
+        if ($name !== '') {
+            $fallback = public_path('uploads/users_documentos/' . ltrim($name, "/\\"));
+            return $fallback;
+        }
+
+        return $p;
+    }
+
+    private function resolveKeyPemFromKeyPath(string $keyPath): string
+    {
+        $keyPath = trim($keyPath);
+        if ($keyPath === '') return $keyPath;
+
+        if (preg_match('/\.pem$/i', $keyPath)) return $keyPath;
+
+        // 1) archivo.key.pem (tu caso real)
+        $cand1 = $keyPath . '.pem';
+        // 2) archivo.pem
+        $cand2 = preg_replace('/\.key$/i', '.pem', $keyPath);
+
+        if (is_file($cand1)) return $cand1;
+        if (is_file($cand2)) return $cand2;
+
+        return $cand1;
+    }
+
+
 
 
     private function cargarCsdParaTimbrado(int $userId): array
@@ -959,46 +1003,122 @@ class FacturasController extends Controller
             throw new \RuntimeException('No hay documentos validados en users_info_factura_documentos.');
         }
 
-        // CERT (.cer)
+        // ----------------------------
+        // Helpers locales (solo aquí)
+        // ----------------------------
+        $normalizePath = function (string $p): string {
+            $p = trim($p);
+            if ($p === '') return '';
+
+            // absoluto Linux (/...) o Windows (C:\...)
+            if ($p[0] === '/' || preg_match('/^[A-Za-z]:\\\\/', $p)) {
+                return $p;
+            }
+
+            // relativo -> public_path()
+            return public_path(ltrim($p, "/\\"));
+        };
+
+        $resolveDocFile = function (object $doc) use ($normalizePath): string {
+            $pathDb = trim((string)($doc->_path ?? ''));
+            $name   = trim((string)($doc->_name ?? ''));
+
+            // 1) Si _path es archivo directo y existe, úsalo
+            if ($pathDb !== '') {
+                $p = $normalizePath($pathDb);
+                if (is_file($p)) {
+                    return $p;
+                }
+
+                // 2) Si _path es carpeta/base, intenta _path + _name (sin duplicar)
+                if ($name !== '') {
+                    // si _path ya termina con el nombre, NO lo vuelvas a pegar
+                    if (basename($p) !== $name) {
+                        $cand = rtrim($p, "/\\") . DIRECTORY_SEPARATOR . $name;
+                        if (is_file($cand)) return $cand;
+                    }
+                }
+
+                // si no existe, regresamos el normalizado para mostrar ruta real en error
+                return $p;
+            }
+
+            // 3) Sin _path: fallback clásico en public/uploads/users_documentos/<name>
+            if ($name === '') {
+                return '';
+            }
+
+            return public_path('uploads/users_documentos' . DIRECTORY_SEPARATOR . $name);
+        };
+
+        $resolveKeyPemPath = function (string $keyPath): string {
+            $keyPath = trim($keyPath);
+            if ($keyPath === '') return $keyPath;
+
+            // si ya es PEM, úsalo
+            if (preg_match('/\.pem$/i', $keyPath)) {
+                return $keyPath;
+            }
+
+            // Caso real tuyo en server: archivo.key.pem
+            $cand1 = $keyPath . '.pem';
+
+            // Fallback: archivo.key -> archivo.pem
+            $cand2 = preg_replace('/\.key$/i', '.pem', $keyPath);
+
+            if (is_file($cand1)) return $cand1;
+            if (is_file($cand2)) return $cand2;
+
+            // si ninguno existe, regresa cand1 para error explícito
+            return $cand1;
+        };
+
+        // ----------------------------
+        // 1) Buscar CERT (.cer)
+        // ----------------------------
         $cer = $docs->first(function ($d) {
-            return ($d->tipo === 'ARCHIVO_CERTIFICADO') && str_ends_with(strtolower($d->_name), '.cer');
+            return ($d->tipo === 'ARCHIVO_CERTIFICADO') && str_ends_with(strtolower((string)$d->_name), '.cer');
         });
 
         if (!$cer) {
             throw new \RuntimeException('No se encontró ARCHIVO_CERTIFICADO .cer.');
         }
 
-        // KEY PEM (.pem)
-        $keyPemDoc = $docs->first(function ($d) {
-            $n = strtolower($d->_name);
-            return ($d->tipo === 'ARCHIVO_LLAVE') && str_ends_with($n, '.pem');
+        // ----------------------------
+        // 2) Buscar LLAVE (en BD normalmente es .key, NO .pem)
+        //    Aquí YA NO pedimos que termine en .pem
+        // ----------------------------
+        $keyDoc = $docs->first(function ($d) {
+            return ($d->tipo === 'ARCHIVO_LLAVE');
         });
 
-        if (!$keyPemDoc) {
-            throw new \RuntimeException('No se encontró ARCHIVO_LLAVE .pem.');
+        if (!$keyDoc) {
+            throw new \RuntimeException('No se encontró ARCHIVO_LLAVE.');
         }
 
-        $base = public_path('uploads/users_documentos');
-
-        $cerPath = $base . DIRECTORY_SEPARATOR . $cer->_name;
-        $keyPemPath = $base . DIRECTORY_SEPARATOR . $keyPemDoc->_name;
+        // ----------------------------
+        // 3) Resolver rutas reales (usa _path)
+        // ----------------------------
+        $cerPath = $resolveDocFile($cer);
+        $keyPath = $resolveDocFile($keyDoc);          // puede ser .key
+        $keyPemPath = $resolveKeyPemPath($keyPath);   // busca .key.pem
 
         if (!is_file($cerPath)) {
             throw new \RuntimeException("No existe el archivo .cer en: {$cerPath}");
         }
         if (!is_file($keyPemPath)) {
-            throw new \RuntimeException("No existe el archivo .pem en: {$keyPemPath}");
+            throw new \RuntimeException("No existe el archivo .pem en: {$keyPemPath} (derivado de: {$keyPath})");
         }
 
+        // ----------------------------
+        // 4) Cargar contenido
+        // ----------------------------
         $certB64 = base64_encode(file_get_contents($cerPath));
-        $keyPem = file_get_contents($keyPemPath);
+        $keyPem  = file_get_contents($keyPemPath);
 
-        // Número certificado: intenta BD, si no, lo dejas vacío y truena arriba (mejor explícito)
-        $noCert = (string)($cer->numero_certificado ?? $cer->no_certificado ?? $cer->numero ?? '');
-        $noCert = trim($noCert);
-
+        // Número certificado (de tu BD)
+        $noCert = trim((string)($cer->numero_certificado ?? $cer->no_certificado ?? $cer->numero ?? ''));
         if ($noCert === '') {
-            // si no lo tienes en BD, aquí te conviene guardarlo en la tabla y ya.
             throw new \RuntimeException('El documento .cer no tiene numero_certificado en BD (users_info_factura_documentos).');
         }
 
@@ -1010,6 +1130,7 @@ class FacturasController extends Controller
             'key_pem_path' => $keyPemPath,
         ];
     }
+
 
 
 
