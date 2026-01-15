@@ -215,44 +215,44 @@ class MultiPac {
     $resolveDocPath = function($doc): string {
         $pathDb = '';
         $name   = '';
-
+    
         if (is_object($doc)) {
             if (method_exists($doc, 'getPath')) {
                 $pathDb = (string)$doc->getPath();
             } elseif (property_exists($doc, '_path')) {
                 $pathDb = (string)$doc->_path;
             }
-
+    
             if (method_exists($doc, 'getName')) {
                 $name = (string)$doc->getName();
             } elseif (property_exists($doc, '_name')) {
                 $name = (string)$doc->_name;
             }
         }
-
+    
         $pathDb = trim($pathDb);
-
+    
         // Normaliza: si es relativo -> public_path()
         $normalize = function(string $p): string {
             $p = trim($p);
             if ($p === '') return $p;
-
+    
             // absoluto Linux (/...) o Windows (C:\...)
             if ($p[0] === '/' || preg_match('/^[A-Za-z]:\\\\/', $p)) {
                 return $p;
             }
-
+    
             return public_path(ltrim($p, "/\\"));
         };
-
+    
         // 1) Si _path existe como archivo, úsalo
         if ($pathDb !== '') {
             $p = $normalize($pathDb);
-
+    
             if (is_file($p)) {
                 return $p;
             }
-
+    
             // 2) Si _path era carpeta/base, intenta _path/_name (sin duplicar)
             if ($name !== '') {
                 if (basename($p) !== $name) {
@@ -260,41 +260,41 @@ class MultiPac {
                     if (is_file($cand)) return $cand;
                 }
             }
-
+    
             // si no existió, regresa el path normalizado para que el error sea claro
             return $p;
         }
-
+    
         // 3) Sin _path: fallback por nombre, pero ABSOLUTO
         if ($name === '') {
             return '';
         }
-
+    
         $fallback = public_path('uploads/users_documentos' . DIRECTORY_SEPARATOR . $name);
         return $fallback;
     };
 
 
     $resolveKeyPemPath = function(string $keyPath): string {
-        $keyPath = trim($keyPath);
-        if ($keyPath === '') return $keyPath;
+    $keyPath = trim($keyPath);
+    if ($keyPath === '') return $keyPath;
 
-        // si ya es pem
-        if (preg_match('/\.pem$/i', $keyPath)) {
-            return $keyPath;
-        }
+    // si ya es pem
+    if (preg_match('/\.pem$/i', $keyPath)) {
+        return $keyPath;
+    }
 
-        // tu caso real en server: archivo.key.pem
-        $cand1 = $keyPath . '.pem';
+    // tu caso real en server: archivo.key.pem
+    $cand1 = $keyPath . '.pem';
 
-        // fallback: archivo.key -> archivo.pem
-        $cand2 = preg_replace('/\.key$/i', '.pem', $keyPath);
+    // fallback: archivo.key -> archivo.pem
+    $cand2 = preg_replace('/\.key$/i', '.pem', $keyPath);
 
-        if (is_file($cand1)) return $cand1;
-        if (is_file($cand2)) return $cand2;
+    if (is_file($cand1)) return $cand1;
+    if (is_file($cand2)) return $cand2;
 
-        return $cand1; // para mostrar qué esperaba
-    };
+    return $cand1; // para mostrar qué esperaba
+};
 
 
     // -----------------------------
