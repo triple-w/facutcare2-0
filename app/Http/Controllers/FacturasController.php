@@ -236,144 +236,174 @@ class FacturasController extends Controller
     }
 
     public function preview(Request $request)
-{
-    $userId = auth()->id();
-    if (!$userId) {
-        return redirect()->route('login');
-    }
-
-    $payload = json_decode((string)$request->input('payload', ''), true);
-
-    if (!is_array($payload) || empty($payload)) {
-        return redirect()->route('facturas.create')
-            ->with('error', 'Payload inválido.');
-    }
-
-    // ✅ folio normalizado
-    $payload = $this->normalizarFolioEnPayload($userId, $payload);
-
-    // ✅ debug ya con payload válido
-    $payload['_debug_timbrado_paths'] = $this->debugTimbradoPaths($userId);
-
-    // guarda el draft para volver a editar / timbrar
-    session()->put('factura_draft', $payload);
-
-    return $this->renderPreviewFromPayload($payload);
-}
-
-    private function debugTimbradoPaths(int $userId): array
     {
-        $tablaDocs = 'users_info_factura_documentos';
-    $tablaInfo = 'users_info_factura';
-
-    if (!Schema::hasTable($tablaInfo) || !Schema::hasTable($tablaDocs)) {
-        return [
-            'error' => 'No existen las tablas users_info_factura o users_info_factura_documentos.',
-            'paths' => [
-                'base_path' => base_path(),
-                'public_path' => public_path(),
-                'storage_path' => storage_path(),
-                'cwd' => getcwd(),
-            ],
-        ];
-    }
-
-    // 1) Encontrar el registro de users_info_factura por users_id
-    $info = DB::table($tablaInfo)
-        ->where('users_id', $userId)
-        ->first();
-
-    if (!$info || !isset($info->id)) {
-        return [
-            'error' => "No encontré users_info_factura para users_id={$userId}.",
-            'user_id' => $userId,
-            'paths' => [
-                'base_path' => base_path(),
-                'public_path' => public_path(),
-                'storage_path' => storage_path(),
-                'cwd' => getcwd(),
-            ],
-        ];
-    }
-
-    $usersFacturaInfoId = (int)$info->id;
-
-    // 2) Traer documentos por users_factura_info_id
-    $docs = DB::table($tablaDocs)
-        ->where('users_factura_info_id', $usersFacturaInfoId)
-        ->get();
-
-    $out = [
-        'user_id' => $userId,
-        'users_factura_info_id' => $usersFacturaInfoId,
-        'docs_count' => count($docs),
-        'docs' => [],
-        'paths' => [
-            'base_path' => base_path(),
-            'public_path' => public_path(),
-            'storage_path' => storage_path(),
-            'cwd' => getcwd(),
-        ],
-    ];
-
-    foreach ($docs as $d) {
-        $tipo   = (string)($d->tipo ?? '');
-        $name   = (string)($d->_name ?? '');
-        $pathDb = (string)($d->_path ?? '');
-
-        // candidato PEM (tu lógica vieja: si es .key => .key.pem)
-        $pemName = $name;
-        $ext = strtolower(pathinfo($pemName, PATHINFO_EXTENSION));
-        if ($ext === 'key') {
-            $pemName .= '.pem';
+        $userId = auth()->id();
+        if (!$userId) {
+            return redirect()->route('login');
         }
 
-        // candidatos: muchos proyectos guardan uploads en public/
-        $candidatePublic      = public_path(trim($pathDb, "/\\") . '/' . $name);
-        $candidatePublicPem   = public_path(trim($pathDb, "/\\") . '/' . $pemName);
+        $payload = json_decode((string)$request->input('payload', ''), true);
 
-        // candidatos: otros los guardan en storage/app/
-        $candidateStorage     = storage_path('app/' . trim($pathDb, "/\\") . '/' . $name);
-        $candidateStoragePem  = storage_path('app/' . trim($pathDb, "/\\") . '/' . $pemName);
+        if (!is_array($payload) || empty($payload)) {
+            return redirect()->route('facturas.create')
+                ->with('error', 'Payload inválido.');
+        }
 
-        // candidatos: ruta directa desde base_path
-        $candidateBase        = base_path(trim($pathDb, "/\\") . '/' . $name);
-        $candidateBasePem     = base_path(trim($pathDb, "/\\") . '/' . $pemName);
+        // ✅ folio normalizado
+        $payload = $this->normalizarFolioEnPayload($userId, $payload);
 
-        $out['docs'][] = [
-            'tipo' => $tipo,
-            '_name' => $name,
-            '_path' => $pathDb,
-            'numero_certificado' => (string)($d->numero_certificado ?? ''),
-            'vigencia' => (string)($d->vigencia ?? ''),
+        // ❌ quitamos paths (ya no lo metas al payload)
+        // $payload['_debug_timbrado_paths'] = $this->debugTimbradoPaths($userId);
 
-            'candidates' => [
-                'public'  => $candidatePublic,
-                'storage' => $candidateStorage,
-                'base'    => $candidateBase,
+        // ✅ DEBUG COMPLETO de impuestos/conceptos (para detectar CFDI40221)
+        $payload['_debug_impuestos'] = $this->debugImpuestosFromPayload($payload);
+
+        // guarda el draft para volver a editar / timbrar
+        session()->put('factura_draft', $payload);
+
+        // ✅ si quieres dump/stop SOLO cuando lo pidas:
+        // /facturacion/facturas/preview?debug_impuestos=1 (si tu ruta es POST, mándalo como input hidden debug_impuestos=1)
+        if ($request->boolean('debug_impuestos')) {
+            dd($payload['_debug_impuestos']);
+        }
+
+        return $this->renderPreviewFromPayload($payload);
+    }
+
+
+
+
+    /**
+     * Debug de impuestos por concepto y agrupados como exige CFDI:
+     * - Calcula Importe por impuesto con redondeo a 2 decimales por concepto
+     * - Agrupa por (Impuesto|Factor|TasaOCuota|Tipo) para comparar contra el nodo global
+     */
+    private function debugImpuestosFromPayload(array $payload): array
+    {
+        $conceptos = $payload['conceptos'] ?? [];
+
+        $out = [
+            'conceptos' => [],
+            'agrupados' => [
+                'traslados'   => [], // clave => suma_importe
+                'retenciones' => [],
             ],
-            'exists' => [
-                'public'  => file_exists($candidatePublic),
-                'storage' => file_exists($candidateStorage),
-                'base'    => file_exists($candidateBase),
+            'totales' => [
+                'subtotal'  => 0.0,
+                'descuento' => 0.0,
+                'traslados' => 0.0,
+                'retenciones' => 0.0,
+                'total'     => 0.0,
             ],
-
-            'pem_name_guess' => $pemName,
-            'pem_candidates' => [
-                'public'  => $candidatePublicPem,
-                'storage' => $candidateStoragePem,
-                'base'    => $candidateBasePem,
-            ],
-            'pem_exists' => [
-                'public'  => file_exists($candidatePublicPem),
-                'storage' => file_exists($candidateStoragePem),
-                'base'    => file_exists($candidateBasePem),
-            ],
+            'nota' => 'CFDI40221 ocurre si el Importe del Traslado GLOBAL no coincide con la suma (redondeada) de importes por concepto para mismo Impuesto y TasaOCuota.',
         ];
+
+        $sumSubtotal = 0.0;
+        $sumDescuento = 0.0;
+        $sumTras = 0.0;
+        $sumRet = 0.0;
+
+        foreach ($conceptos as $idx => $c) {
+            $cantidad = (float)($c['cantidad'] ?? 0);
+            $precio   = (float)($c['precio'] ?? 0);
+            $des      = (float)($c['descuento'] ?? 0);
+
+            // Importante: para CFDI normalmente Importe y Descuento van a 2 decimales
+            $importe  = round($cantidad * $precio, 2);
+            $des2     = round($des, 2);
+            $base     = round(max($importe - $des2, 0), 2);
+
+            $sumSubtotal += $importe;
+            $sumDescuento += $des2;
+
+            $conceptDebug = [
+                'idx'         => $idx,
+                'uid'         => $c['uid'] ?? null,
+                'descripcion' => $c['descripcion'] ?? '',
+                'cantidad'    => $cantidad,
+                'precio'      => $precio,
+                'importe'     => $importe,
+                'descuento'   => $des2,
+                'base'        => $base,
+                'impuestos'   => [],
+            ];
+
+            foreach (($c['impuestos'] ?? []) as $i) {
+                $factor = (string)($i['factor'] ?? 'Tasa');
+                if ($factor === 'Exento') {
+                    $conceptDebug['impuestos'][] = [
+                        'tipo'   => $i['tipo'] ?? 'T',
+                        'impuesto' => $i['impuesto'] ?? 'IVA',
+                        'factor' => 'Exento',
+                        'tasa_pct' => (float)($i['tasa'] ?? 0),
+                        'tasa_ocuota' => 0,
+                        'importe' => 0,
+                    ];
+                    continue;
+                }
+
+                $tipoMov = (string)($i['tipo'] ?? 'T'); // T=Traslado, R=Retención
+                $impTxt  = (string)($i['impuesto'] ?? 'IVA');
+                $impClave = $this->mapImpuestoSat($impTxt); // 002 IVA, 001 ISR, 003 IEPS (lo usual)
+
+                $tasaPct = (float)($i['tasa'] ?? 0);
+                $tasaOCuota = round($tasaPct / 100, 6);       // CFDI usa TasaOCuota con 6 decimales típicamente
+                $monto = round($base * $tasaOCuota, 2);       // IMPORTANTÍSIMO: Importe redondeado a 2 por concepto
+
+                $conceptDebug['impuestos'][] = [
+                    'tipo'        => $tipoMov,
+                    'impuesto_txt'=> $impTxt,
+                    'impuesto_sat'=> $impClave,
+                    'factor'      => $factor,
+                    'tasa_pct'    => $tasaPct,
+                    'tasa_ocuota' => number_format($tasaOCuota, 6, '.', ''),
+                    'base'        => $base,
+                    'importe'     => $monto,
+                ];
+
+                // Agrupar por clave (Impuesto|Factor|TasaOCuota) y separado por tipoMov
+                $key = $impClave.'|'.$factor.'|'.number_format($tasaOCuota, 6, '.', '');
+
+                if ($tipoMov === 'R') {
+                    $sumRet += $monto;
+                    $out['agrupados']['retenciones'][$key] = round(($out['agrupados']['retenciones'][$key] ?? 0) + $monto, 2);
+                } else {
+                    $sumTras += $monto;
+                    $out['agrupados']['traslados'][$key] = round(($out['agrupados']['traslados'][$key] ?? 0) + $monto, 2);
+                }
+            }
+
+            $out['conceptos'][] = $conceptDebug;
+        }
+
+        $total = round($sumSubtotal - $sumDescuento + $sumTras - $sumRet, 2);
+
+        $out['totales'] = [
+            'subtotal'    => round($sumSubtotal, 2),
+            'descuento'   => round($sumDescuento, 2),
+            'traslados'   => round($sumTras, 2),
+            'retenciones' => round($sumRet, 2),
+            'total'       => $total,
+        ];
+
+        return $out;
     }
 
-    return $out;
+    /**
+     * Mapea impuesto textual a clave SAT más común.
+     * Ajusta si tu payload ya trae la clave directamente.
+     */
+    private function mapImpuestoSat(string $impTxt): string
+    {
+        $impTxt = strtoupper(trim($impTxt));
+        return match ($impTxt) {
+            'IVA'  => '002',
+            'ISR'  => '001',
+            'IEPS' => '003',
+            default => $impTxt, // si ya viene '002' etc, lo dejamos
+        };
     }
+
 
     /**
      * Resuelve la ruta REAL del documento:
