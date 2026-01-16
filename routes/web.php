@@ -60,7 +60,10 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::get('/facturas/{id}/ver', [FacturasController::class, 'show'])->name('facturas.ver');
         Route::get('/facturas/{id}/acuse', [FacturasController::class, 'downloadAcuse'])->name('facturas.acuse');
         Route::post('/facturas/{id}/regenerar-pdf', [FacturasController::class, 'regenerarPdf'])->name('facturas.regenerarPdf');
+
         Route::post('/facturas/{id}/cancelar', [FacturasController::class, 'cancelar'])->name('facturas.cancelar');
+
+
         Route::get('/facturas/chunk', [FacturasController::class, 'indexChunk'])->name('facturas.indexChunk');
         Route::get('/facturas/rows', [\App\Http\Controllers\Users\FacturasController::class, 'rows'])->name('facturas.rows');
 

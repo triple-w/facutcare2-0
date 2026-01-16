@@ -19,7 +19,6 @@ use Illuminate\Support\Str;
         $fecha = $f->fecha ?? $f->created_at ?? null;
         $fechaTxt = $fecha ? \Carbon\Carbon::parse($fecha)->format('d/m/Y H:i') : '—';
 
-        // ✅ “Haystack” para filtrar en front (solo lo ya impreso)
         $haystack = Str::lower(trim(implode(' ', [
             $serie, $folio, $serieFolio, $razon, $rfc, $uuid, $tipo, $estatus,
             number_format($total, 2, '.', ''),
@@ -143,19 +142,19 @@ use Illuminate\Support\Str;
                 </form>
 
                 @if(strtoupper((string)$f->estatus) === 'TIMBRADA')
-                    <form class="inline" method="POST" action="{{ route('facturas.cancelar', $f->id) }}">
-                        @csrf
-                        <button type="submit"
-                                title="Cancelar"
-                                onclick="return confirm('¿Seguro de cancelar la factura?');"
-                                class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400">
-                            <span class="sr-only">Cancelar</span>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                      d="M18.364 5.636l-12.728 12.728M6.343 6.343a9 9 0 1012.728 12.728A9 9 0 006.343 6.343z"/>
-                            </svg>
-                        </button>
-                    </form>
+                    <button type="button"
+                            title="Cancelar"
+                            data-action="open-cancel-modal"
+                            data-id="{{ $f->id }}"
+                            data-uuid="{{ $uuid }}"
+                            data-cancel-url="{{ route('facturas.cancelar', $f->id) }}"
+                            class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400">
+                        <span class="sr-only">Cancelar</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M18.364 5.636l-12.728 12.728M6.343 6.343a9 9 0 1012.728 12.728A9 9 0 006.343 6.343z"/>
+                        </svg>
+                    </button>
                 @endif
             </div>
         </td>

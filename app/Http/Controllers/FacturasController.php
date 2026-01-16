@@ -2359,7 +2359,7 @@ private function parseCfdiParties(string $xml): array
         if (!in_array($motivo, ['01','02','03','04'], true)) {
             return back()->with('error', 'Motivo inválido.');
         }
-        if ($motivo === '04' && trim($folioSustitucion) === '') {
+        if ($motivo === '01' && trim($folioSustitucion) === '') {
             return back()->with('error', 'Para motivo 04 es obligatorio el UUID de sustitución.');
         }
 
@@ -2430,7 +2430,7 @@ private function parseCfdiParties(string $xml): array
                 'rfcReceptor' => $rfcReceptor,
                 'total' =>  $totalPac,
                 'motivo' => $motivo,
-                'folioSustitucion' => $motivo === '04' ? $folioSustitucion : '',
+                'folioSustitucion' => $motivo === '01' ? $folioSustitucion : '',
             ]);
 
             // Normalizar respuesta
