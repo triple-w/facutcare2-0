@@ -96,13 +96,44 @@
         <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
           @foreach($conceptos as $c)
           @php
-            $cantidad = (float)($c['cantidad'] ?? 0);
-            $precio   = (float)($c['precio'] ?? 0);
-            $descuento = (float)($c['descuento'] ?? 0);
-            $ivaTasa   = (float)($c['iva_tasa'] ?? 0);
-            $importe   = ($cantidad * $precio) - $descuento;
-            $ivaMonto  = ($c['aplica_iva'] ?? false) ? ($importe * $ivaTasa) : 0;
-          @endphp
+          $r2 = fn($n) => round((float)$n, 2);
+
+          $cantidad  = (float)($c['cantidad'] ?? 0);
+          $precio    = (float)($c['precio'] ?? 0);
+          $descuento = (float)($c['descuento'] ?? 0);
+
+          // CFDI: Importe concepto = qty*precio (SIN descuento)
+          $importeConcepto = $r2($cantidad * $precio);
+          $desc2 = $r2($descuento);
+
+          // Base para impuestos = Importe - Descuento
+          $baseImp = $r2(max(0, $importeConcepto - $desc2));
+
+          // IVA: si trae impuestos[] en payload, úsalo; si no, usa aplica_iva + iva_tasa
+          $ivaMonto = 0.0;
+
+          $imps = $c['impuestos'] ?? null;
+          if (is_array($imps) && count($imps)) {
+              foreach ($imps as $it) {
+                  $tipo = strtoupper((string)($it['tipo'] ?? 'T'));
+                  $imp  = strtoupper((string)($it['impuesto'] ?? 'IVA'));
+                  $fac  = (string)($it['factor'] ?? 'Tasa');
+                  if ($imp !== 'IVA' || strtolower($fac) === 'exento') continue;
+
+                  $tasaIn = (float)($it['tasa'] ?? 0);
+                  $tasa = ($tasaIn > 1) ? ($tasaIn / 100) : $tasaIn; // 16 -> 0.16
+                  $m = $r2($baseImp * $tasa); // CLAVE: redondeo por concepto
+                  $ivaMonto += ($tipo === 'R') ? -$m : $m;
+              }
+              $ivaMonto = $r2($ivaMonto);
+          } else {
+              $ivaTasa = (float)($c['iva_tasa'] ?? 0.16);
+              $ivaMonto = ($c['aplica_iva'] ?? false) ? $r2($baseImp * $ivaTasa) : 0.0;
+          }
+
+          $importeLinea = $r2($baseImp + $ivaMonto);
+        @endphp
+
           <tr>
             <td class="p-2">{{ $cantidad }}</td>
             <td class="p-2">{{ $c['descripcion'] ?? '' }}</td>
@@ -114,7 +145,7 @@
             <td class="p-2 text-right">
               {{ ($c['aplica_iva'] ?? false) ? number_format($ivaTasa * 100, 2).'%' : '0%' }}
             </td>
-            <td class="p-2 text-right">${{ number_format($importe + $ivaMonto, 2) }}</td>
+            <td class="p-2 text-right">${{ number_format($importeLinea, 2) }}</td>
           </tr>
           @endforeach
         </tbody>
@@ -122,17 +153,54 @@
     </div>
   </div>
 
-  {{-- Totales --}}
-  @php
-    $subtotal = collect($conceptos)->sum(fn($r) => ($r['cantidad']??0)*($r['precio']??0));
-    $descTotal = collect($conceptos)->sum('descuento');
-    $base = $subtotal - $descTotal;
-    $ivaTotal = collect($conceptos)->sum(function($r){
-      $imp = (($r['cantidad']??0)*($r['precio']??0)) - ($r['descuento']??0);
-      return ($r['aplica_iva']??false) ? ($imp * ($r['iva_tasa']??0)) : 0;
-    });
-    $total = $base + $ivaTotal;
+    {{-- Totales --}}
+    @php
+    $r2 = fn($n) => round((float)$n, 2);
+
+    $subtotal = 0.0;   // suma de Importe concepto (qty*precio) redondeado
+    $descTotal = 0.0;  // suma descuentos redondeados
+    $ivaTotal = 0.0;   // suma IVA redondeado por concepto
+
+    foreach ($conceptos as $r) {
+        $qty = (float)($r['cantidad'] ?? 0);
+        $precio = (float)($r['precio'] ?? 0);
+        $desc = (float)($r['descuento'] ?? 0);
+
+        $importeConcepto = $r2($qty * $precio);
+        $desc2 = $r2($desc);
+        $baseImp = $r2(max(0, $importeConcepto - $desc2));
+
+        $subtotal = $r2($subtotal + $importeConcepto);
+        $descTotal = $r2($descTotal + $desc2);
+
+        $ivaLinea = 0.0;
+
+        $imps = $r['impuestos'] ?? null;
+        if (is_array($imps) && count($imps)) {
+            foreach ($imps as $it) {
+                $tipo = strtoupper((string)($it['tipo'] ?? 'T'));
+                $imp  = strtoupper((string)($it['impuesto'] ?? 'IVA'));
+                $fac  = (string)($it['factor'] ?? 'Tasa');
+                if ($imp !== 'IVA' || strtolower($fac) === 'exento') continue;
+
+                $tasaIn = (float)($it['tasa'] ?? 0);
+                $tasa = ($tasaIn > 1) ? ($tasaIn / 100) : $tasaIn;
+                $m = $r2($baseImp * $tasa);
+                $ivaLinea += ($tipo === 'R') ? -$m : $m;
+            }
+            $ivaLinea = $r2($ivaLinea);
+        } else {
+            $ivaTasa = (float)($r['iva_tasa'] ?? 0.16);
+            $ivaLinea = ($r['aplica_iva'] ?? false) ? $r2($baseImp * $ivaTasa) : 0.0;
+        }
+
+        $ivaTotal = $r2($ivaTotal + $ivaLinea);
+    }
+
+    $base = $r2(max(0, $subtotal - $descTotal));
+    $total = $r2($base + $ivaTotal);
   @endphp
+
 
   <div class="bg-white dark:bg-gray-800 shadow rounded-lg p-6 text-sm">
     <div class="flex flex-col md:flex-row md:justify-end gap-2">
