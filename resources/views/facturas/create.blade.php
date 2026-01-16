@@ -251,12 +251,47 @@
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Selecciona cliente</label>
           <div class="flex gap-2">
             <div class="flex-1">
-              <select x-model="form.cliente_id" @change="onClienteChange()" class="form-select w-full">
-                <option value="">— Selecciona —</option>
-                <template x-for="c in clientes" :key="c.id">
-                  <option :value="String(c.id)" x-text="`${c.razon_social} — ${c.rfc}`"></option>
-                </template>
-              </select>
+              <div class="relative flex-1">
+                  <input
+                    type="text"
+                    class="form-input w-full"
+                    placeholder="Escribe RFC o Razón Social…"
+                    x-model="buscaCliente.q"
+                    @input.debounce.250ms="filtrarClientes()"
+                    @focus="buscaCliente.open = true; filtrarClientes()"
+                    @keydown.escape="buscaCliente.open = false"
+                  />
+
+                  {{-- Dropdown resultados --}}
+                  <div
+                    x-show="buscaCliente.open && buscaCliente.items.length"
+                    x-transition
+                    class="absolute z-30 mt-1 w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden"
+                    style="display:none"
+                  >
+                    <ul class="max-h-64 overflow-auto">
+                      <template x-for="c in buscaCliente.items" :key="c.id">
+                        <li>
+                          <button
+                            type="button"
+                            class="w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+                            @click="seleccionarCliente(c)"
+                          >
+                            <div class="text-sm font-medium" x-text="c.razon_social"></div>
+                            <div class="text-xs text-gray-500" x-text="c.rfc"></div>
+                          </button>
+                        </li>
+                      </template>
+                    </ul>
+                    <div class="px-3 py-2 text-xs text-gray-500 border-t border-gray-200 dark:border-gray-700">
+                      Mostrando <span x-text="buscaCliente.items.length"></span> resultados
+                    </div>
+                  </div>
+                </div>
+
+                {{-- Este input oculto conserva EXACTAMENTE tu binding actual --}}
+                <input type="hidden" x-model.number="form.cliente_id">
+
             </div>
 
             <button type="button"
@@ -704,6 +739,8 @@
     // buscador de productos
     buscaProd: { query: '', suggestions: [], selectedId: '' },
 
+    buscaCliente: { q: '', items: [], open: false },
+
     // totales
     totales: { subtotal: 0, descuento: 0, impuestos: 0, ret_local_total: 0, total: 0 },
 
@@ -850,6 +887,9 @@
         this.pedirSiguienteFolio();
       }
 
+      // al final de init()
+      this.onClienteChange();
+      this.filtrarClientes(); // opcional: precargar dropdown
       this.recalcularTotales();
     },
 
@@ -881,11 +921,48 @@
       if (this.maxFecha && this.form.fecha > this.maxFecha) this.form.fecha = this.maxFecha;
     },
 
+    // ----- cliente -----
+    filtrarClientes(){
+      const q = (this.buscaCliente.q || '').trim().toLowerCase();
+
+      // Si no hay texto, muestra los primeros N para “explorar”
+      if (!q) {
+        this.buscaCliente.items = (this.clientes || []).slice(0, 20);
+        return;
+      }
+
+      // Filtra por RFC o razón social
+      const list = (this.clientes || []).filter(c => {
+        const rs = String(c.razon_social || '').toLowerCase();
+        const rfc = String(c.rfc || '').toLowerCase();
+        return rs.includes(q) || rfc.includes(q);
+      });
+
+      this.buscaCliente.items = list.slice(0, 25);
+    },
+
+    seleccionarCliente(c){
+      if (!c || !c.id) return;
+
+      // setea el id (NUMÉRICO) y refresca lo demás
+      this.form.cliente_id = Number(c.id);
+      this.clienteSel = c;
+      this.clienteEdit = JSON.parse(JSON.stringify(c));
+
+      // muestra “bonito” en el input
+      this.buscaCliente.q = `${c.razon_social} — ${c.rfc}`;
+      this.buscaCliente.open = false;
+    },
+
+
     onClienteChange(){
       const id = Number(this.form.cliente_id || 0);
       const c = this.clientes.find(x => Number(x.id) === id) || {};
       this.clienteSel = c;
       this.clienteEdit = JSON.parse(JSON.stringify(c || {}));
+
+      // 👇 NUEVO: reflejar en el buscador
+    if (c && c.id) this.buscaCliente.q = `${c.razon_social} — ${c.rfc}`;
     },
 
     async submitEditarCliente(){
