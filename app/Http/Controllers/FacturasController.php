@@ -1258,6 +1258,17 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
     {
         $userId = auth()->id();
 
+        // ===== Helpers: centavos (evita CFDI40221) =====
+        $toCents = function($n): int {
+            return (int) round(((float)$n) * 100);
+        };
+        $fromCents = function(int $c): string {
+            return number_format($c / 100, 2, '.', '');
+        };
+        $fmt6 = function($n): string {
+            return number_format((float)$n, 6, '.', '');
+        };
+
         // ===== 1) Cliente =====
         $clienteId = (int)($payload['cliente_id'] ?? 0);
         $cliente = \DB::table('clientes')
@@ -1281,12 +1292,15 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
             throw new \RuntimeException('No hay conceptos.');
         }
 
-        // ===== Totales + acumuladores =====
-        $subtotal = 0.0;
-        $descuento = 0.0;
+        // ===== Acumuladores globales en CENTAVOS =====
+        $subTotalCents = 0;        // suma de Importe de conceptos (Cantidad*VU)
+        $descuentoCents = 0;       // suma descuento
+        $totalTrasCents = 0;       // suma traslados global
+        $totalRetCents  = 0;       // suma retenciones global
 
-        // Acumuladores impuestos (para nodo global)
-        $trasAgg = []; // key => ['impuesto','tipo_factor','tasa','importe']
+        // key => ['impuesto','tipo_factor','tasa','base_cents','importe_cents']
+        $trasAgg = [];
+        // key => ['impuesto','importe_cents']
         $retAgg  = [];
 
         // ===== DOM =====
@@ -1299,13 +1313,13 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
         $c = $dom->createElementNS($cfdiNS, 'cfdi:Comprobante');
         $dom->appendChild($c);
 
-        // Namespaces
+        // Namespaces + schema
         $c->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xsi', $xsiNS);
         $c->setAttributeNS($xsiNS, 'xsi:schemaLocation',
             'http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd'
         );
 
-        // ===== Atributos Comprobante (más fieles) =====
+        // ===== Atributos Comprobante =====
         $serie = (string)($payload['serie'] ?? '');
         $folio = (string)($payload['folio'] ?? '');
         $fechaIn = (string)($payload['fecha'] ?? '');
@@ -1318,11 +1332,9 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
         $usoCfdi = (string)($payload['uso_cfdi'] ?? '');
         $exportacion = (string)($payload['exportacion'] ?? '01');
 
-        // Estos dos son los que te faltan en el XML “fiel”
         $condicionesPago = trim((string)($payload['condiciones_pago'] ?? ''));
         $tipoCambio = trim((string)($payload['tipo_cambio'] ?? ''));
 
-        // Lugar expedición desde perfil
         $lugarExpedicion = (string)($perfil->codigo_postal ?? '');
 
         $c->setAttribute('Version', '4.0');
@@ -1330,22 +1342,15 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
         if ($folio !== '') $c->setAttribute('Folio', $folio);
         $c->setAttribute('Fecha', $fecha);
 
-        // OJO: en timbrado REAL van Sello/Certificado/NoCertificado.
-        // Aquí aún NO los ponemos para no inventar valores.
-
         $c->setAttribute('Moneda', $moneda);
         $c->setAttribute('TipoDeComprobante', $tipoComprobante);
         $c->setAttribute('Exportacion', $exportacion);
         if ($lugarExpedicion !== '') $c->setAttribute('LugarExpedicion', $lugarExpedicion);
 
-        // CFDI 4: TipoCambio se incluye si moneda != MXN (y si lo tienes)
         if (strtoupper($moneda) !== 'MXN') {
-            if ($tipoCambio === '') {
-                throw new \RuntimeException('Moneda distinta a MXN requiere TipoCambio.');
-            }
+            if ($tipoCambio === '') throw new \RuntimeException('Moneda distinta a MXN requiere TipoCambio.');
             $c->setAttribute('TipoCambio', $tipoCambio);
         } elseif ($tipoCambio !== '') {
-            // si quieres forzarlo siempre como en tu ejemplo:
             $c->setAttribute('TipoCambio', $tipoCambio);
         }
 
@@ -1353,15 +1358,12 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
             $c->setAttribute('CondicionesDePago', $this->xmlClean($condicionesPago));
         }
 
-        // FormaPago/MetodoPago (aplican normalmente excepto traslado)
         if ($tipoComprobante !== 'T') {
             $c->setAttribute('FormaPago', $formaPago);
             $c->setAttribute('MetodoPago', $metodoPago);
         }
 
-        // ===== InformacionGlobal (Factura Global) =====
-        // Regla: Si es Ingreso y Receptor RFC = XAXX010101000 y Nombre contiene "PUBLICO EN GENERAL",
-        // entonces debe existir cfdi:InformacionGlobal.
+        // ===== InformacionGlobal (si aplica publico general) =====
         $receptorRfc = strtoupper(trim((string)($cliente->rfc ?? '')));
         $receptorNombre = strtoupper(trim((string)($cliente->razon_social ?? '')));
 
@@ -1370,23 +1372,17 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
             && (strpos($receptorNombre, 'PUBLICO EN GENERAL') !== false);
 
         if ($esPublicoEnGeneral) {
-            // Puedes permitir que venga desde el payload en el futuro,
-            // por ahora default diario (01) y mes/año de la fecha del comprobante.
             $ts = strtotime($fecha);
-            $periodicidad = (string)($payload['informacion_global']['periodicidad'] ?? '01'); // 01=Diario
-            $meses = (string)($payload['informacion_global']['meses'] ?? date('m', $ts));     // 01..12
+            $periodicidad = (string)($payload['informacion_global']['periodicidad'] ?? '01');
+            $meses = (string)($payload['informacion_global']['meses'] ?? date('m', $ts));
             $anio  = (string)($payload['informacion_global']['anio']  ?? date('Y', $ts));
 
             $infoGlobal = $dom->createElementNS($cfdiNS, 'cfdi:InformacionGlobal');
             $infoGlobal->setAttribute('Periodicidad', $periodicidad);
             $infoGlobal->setAttribute('Meses', str_pad($meses, 2, '0', STR_PAD_LEFT));
             $infoGlobal->setAttribute('Año', $anio);
-
-            // Lo insertamos ANTES de CfdiRelacionados/Emisor para respetar el orden del comprobante
-            // (como lo hacías en el sistema viejo).
             $c->appendChild($infoGlobal);
         }
-
 
         // ===== CfdiRelacionados (si aplica) =====
         $rels = $payload['relacionados'] ?? [];
@@ -1402,13 +1398,11 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
             foreach ($byTipo as $tr => $uuids) {
                 $cfdiRels = $dom->createElementNS($cfdiNS, 'cfdi:CfdiRelacionados');
                 $cfdiRels->setAttribute('TipoRelacion', $tr);
-
                 foreach ($uuids as $uuid) {
                     $rel = $dom->createElementNS($cfdiNS, 'cfdi:CfdiRelacionado');
                     $rel->setAttribute('UUID', $uuid);
                     $cfdiRels->appendChild($rel);
                 }
-
                 $c->appendChild($cfdiRels);
             }
         }
@@ -1427,17 +1421,12 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
         $re->setAttribute('Nombre', $this->xmlClean((string)($cliente->razon_social ?? '')));
         if ($usoCfdi !== '') $re->setAttribute('UsoCFDI', $usoCfdi);
 
-        // Estos dos son obligatorios en CFDI 4
         $domFiscalRec = (string)($cliente->codigo_postal ?? $cliente->cp ?? '');
-        if ($domFiscalRec === '') {
-            throw new \RuntimeException('El receptor no tiene DomicilioFiscalReceptor (CP).');
-        }
+        if ($domFiscalRec === '') throw new \RuntimeException('El receptor no tiene DomicilioFiscalReceptor (CP).');
         $re->setAttribute('DomicilioFiscalReceptor', $domFiscalRec);
 
         $regRec = (string)($cliente->regimen_fiscal ?? $cliente->regimen_fiscal_receptor ?? '');
-        if ($regRec === '') {
-            throw new \RuntimeException('El receptor no tiene RegimenFiscalReceptor.');
-        }
+        if ($regRec === '') throw new \RuntimeException('El receptor no tiene RegimenFiscalReceptor.');
         $re->setAttribute('RegimenFiscalReceptor', $regRec);
 
         $c->appendChild($re);
@@ -1445,133 +1434,169 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
         // ===== Conceptos =====
         $conceptosNode = $dom->createElementNS($cfdiNS, 'cfdi:Conceptos');
 
+        // Mapeo texto => SAT
+        $mapImpuesto = function(string $txt): string {
+            $t = strtoupper(trim($txt));
+            return match($t) {
+                'IVA'  => '002',
+                'ISR'  => '001',
+                'IEPS' => '003',
+                default => $t, // si ya viene "002"
+            };
+        };
+
         foreach ($conceptos as $idx => $row) {
             $cantidad = (float)($row['cantidad'] ?? 0);
             $precio   = (float)($row['precio'] ?? 0);
             $desc     = (float)($row['descuento'] ?? 0);
-            $base     = max(0, ($cantidad * $precio) - $desc);
 
-            $subtotal += $base;
-            $descuento += $desc;
+            // CFDI: Importe = Cantidad * ValorUnitario (SIN descuento)
+            $importeCents = $toCents($cantidad * $precio);
+            $descCents    = $toCents($desc);
+
+            // Base para impuestos = Importe - Descuento
+            $baseCents = max($importeCents - $descCents, 0);
+
+            $subTotalCents += $importeCents;
+            $descuentoCents += $descCents;
 
             $concepto = $dom->createElementNS($cfdiNS, 'cfdi:Concepto');
 
-            // “Fiel” al ejemplo:
             $concepto->setAttribute('Cantidad', $this->fmt($cantidad, 2));
             $concepto->setAttribute('ClaveProdServ', (string)($row['clave_prod_serv'] ?? '01010101'));
             $concepto->setAttribute('ClaveUnidad', (string)($row['clave_unidad'] ?? 'ACT'));
             $concepto->setAttribute('Unidad', $this->xmlClean((string)($row['unidad'] ?? 'SERV')));
             $concepto->setAttribute('Descripcion', $this->xmlClean((string)($row['descripcion'] ?? '')));
-            $concepto->setAttribute('ValorUnitario', $this->fmt($precio, 2));
-            $concepto->setAttribute('Importe', $this->fmt($base, 2));
+            $concepto->setAttribute('ValorUnitario', $fromCents($toCents($precio)));
+            $concepto->setAttribute('Importe', $fromCents($importeCents));
 
-            // NoIdentificacion (si existe en payload)
             $noIdent = trim((string)($row['no_identificacion'] ?? $row['clave'] ?? ''));
-            if ($noIdent !== '') {
-                $concepto->setAttribute('NoIdentificacion', $this->xmlClean($noIdent));
-            }
+            if ($noIdent !== '') $concepto->setAttribute('NoIdentificacion', $this->xmlClean($noIdent));
 
-            // Descuento (si aplica)
-            if ($desc > 0) {
-                $concepto->setAttribute('Descuento', $this->fmt($desc, 2));
+            if ($descCents > 0) {
+                $concepto->setAttribute('Descuento', $fromCents($descCents));
             }
 
             // ===== Impuestos por concepto =====
-            // 1) Si vienen impuestos “avanzados” (traslados/retenciones) en el payload
-            //    respétalos, si no, usa IVA simple como fallback.
             $tieneImpuestos = false;
             $impuestosConceptoNode = null;
             $trasNode = null;
             $retNode  = null;
 
-            $traslados = $row['traslados'] ?? null;
-            $retenciones = $row['retenciones'] ?? null;
-
-            if (is_array($traslados) || is_array($retenciones)) {
+            // 1) Si viene tu formato actual: row['impuestos'] = [{tipo:'T'|'R', impuesto:'IVA', factor:'Tasa'|'Exento', tasa:16}]
+            $imps = $row['impuestos'] ?? null;
+            if (is_array($imps) && count($imps)) {
                 $impuestosConceptoNode = $dom->createElementNS($cfdiNS, 'cfdi:Impuestos');
+                $trasNode = $dom->createElementNS($cfdiNS, 'cfdi:Traslados');
+                $retNode  = $dom->createElementNS($cfdiNS, 'cfdi:Retenciones');
 
-                // Retenciones
-                if (is_array($retenciones) && count($retenciones)) {
-                    $retNode = $dom->createElementNS($cfdiNS, 'cfdi:Retenciones');
-                    foreach ($retenciones as $r) {
-                        $impCode = (string)($r['impuesto'] ?? '');
-                        $importe = (float)($r['importe'] ?? 0);
+                foreach ($imps as $it) {
+                    $tipo = strtoupper((string)($it['tipo'] ?? 'T')); // T traslado, R ret
+                    $impCode = $mapImpuesto((string)($it['impuesto'] ?? 'IVA'));
+                    $factor = (string)($it['factor'] ?? 'Tasa');
+                    $factorNorm = ucfirst(strtolower($factor)); // Tasa / Exento
 
-                        if ($impCode === '' || $importe <= 0) continue;
+                    // tasa viene en porcentaje (16). Si viene 0.16, lo detectamos
+                    $tasaRaw = (float)($it['tasa'] ?? 0);
+                    $tasa = ($tasaRaw > 1.0) ? ($tasaRaw / 100.0) : $tasaRaw; // 16 => 0.16
+                    $tasaOCuota = $fmt6($tasa);
 
-                        $ret = $dom->createElementNS($cfdiNS, 'cfdi:Retencion');
-                        $ret->setAttribute('Impuesto', $impCode);
-                        $ret->setAttribute('Importe', $this->fmt($importe, 2));
-                        $retNode->appendChild($ret);
-
-                        $key = $impCode;
-                        $retAgg[$key] = $retAgg[$key] ?? ['impuesto'=>$impCode,'importe'=>0.0];
-                        $retAgg[$key]['importe'] += $importe;
-
-                        $tieneImpuestos = true;
-                    }
-                }
-
-                // Traslados
-                if (is_array($traslados) && count($traslados)) {
-                    $trasNode = $dom->createElementNS($cfdiNS, 'cfdi:Traslados');
-                    foreach ($traslados as $t) {
-                        $impCode = (string)($t['impuesto'] ?? '002');
-                        $factor  = (string)($t['tipo_factor'] ?? 'Tasa');
-                        $tasa    = (float)($t['tasa'] ?? 0.16);
-
-                        $tras = $dom->createElementNS($cfdiNS, 'cfdi:Traslado');
-                        $tras->setAttribute('Base', $this->fmt($base, 2));
-                        $tras->setAttribute('Impuesto', $impCode);
-                        $tras->setAttribute('TipoFactor', $factor);
-
-                        if (strtolower($factor) !== 'exento') {
-                            $tras->setAttribute('TasaOCuota', $this->fmt($tasa, 6));
-                            $importe = max(0, $base * $tasa);
-                            $tras->setAttribute('Importe', $this->fmt($importe, 2));
-
-                            $key = $impCode.'|'.$factor.'|'.$this->fmt($tasa, 6);
-                            $trasAgg[$key] = $trasAgg[$key] ?? [
-                                'impuesto'=>$impCode,'tipo_factor'=>$factor,'tasa'=>$this->fmt($tasa,6),'importe'=>0.0
-                            ];
-                            $trasAgg[$key]['importe'] += $importe;
+                    if ($tipo === 'R') {
+                        // Retencion
+                        if (strtolower($factorNorm) === 'exento') {
+                            // Retención exenta no suele aplicar; la ignoramos por seguridad
+                            continue;
                         }
 
-                        $trasNode->appendChild($tras);
+                        $impCents = (int) round(($baseCents / 100) * $tasa * 100);
+
+                        if ($impCents <= 0) continue;
+
+                        $n = $dom->createElementNS($cfdiNS, 'cfdi:Retencion');
+                        $n->setAttribute('Base', $fromCents($baseCents));
+                        $n->setAttribute('Impuesto', $impCode);
+                        $n->setAttribute('TipoFactor', $factorNorm);
+                        $n->setAttribute('TasaOCuota', $tasaOCuota);
+                        $n->setAttribute('Importe', $fromCents($impCents));
+                        $retNode->appendChild($n);
+
+                        $k = $impCode.'|'.$factorNorm.'|'.$tasaOCuota;
+                        if (!isset($retAgg[$k])) {
+                            $retAgg[$k] = ['impuesto'=>$impCode,'tipo_factor'=>$factorNorm,'tasa'=>$tasaOCuota,'importe_cents'=>0,'base_cents'=>0];
+                        }
+                        $retAgg[$k]['importe_cents'] += $impCents;
+                        $retAgg[$k]['base_cents'] += $baseCents;
+
                         $tieneImpuestos = true;
+                    } else {
+                        // Traslado
+                        $n = $dom->createElementNS($cfdiNS, 'cfdi:Traslado');
+                        $n->setAttribute('Base', $fromCents($baseCents));
+                        $n->setAttribute('Impuesto', $impCode);
+                        $n->setAttribute('TipoFactor', $factorNorm);
+
+                        if (strtolower($factorNorm) !== 'exento') {
+                            $impCents = (int) round(($baseCents / 100) * $tasa * 100);
+                            $n->setAttribute('TasaOCuota', $tasaOCuota);
+                            $n->setAttribute('Importe', $fromCents($impCents));
+
+                            $k = $impCode.'|'.$factorNorm.'|'.$tasaOCuota;
+                            if (!isset($trasAgg[$k])) {
+                                $trasAgg[$k] = [
+                                    'impuesto'=>$impCode,'tipo_factor'=>$factorNorm,'tasa'=>$tasaOCuota,
+                                    'importe_cents'=>0,'base_cents'=>0
+                                ];
+                            }
+                            $trasAgg[$k]['importe_cents'] += $impCents;
+                            $trasAgg[$k]['base_cents'] += $baseCents;
+
+                            $tieneImpuestos = true;
+                        }
+
+                        $trasNode->appendChild($n);
                     }
                 }
+
+                // limpiar nodos vacíos
+                if ($retNode->childNodes->length === 0) $retNode = null;
+                if ($trasNode->childNodes->length === 0) $trasNode = null;
+
             } else {
-                // 2) Fallback IVA simple (lo que ya traías)
+                // 2) Fallback IVA simple (tu viejo)
                 $aplicaIvaSimple = (bool)($row['aplica_iva'] ?? true);
                 $ivaTasaSimple = (float)($row['iva_tasa'] ?? 0.16);
 
                 if ($aplicaIvaSimple) {
-                    $tieneImpuestos = true;
-
                     $impuestosConceptoNode = $dom->createElementNS($cfdiNS, 'cfdi:Impuestos');
                     $trasNode = $dom->createElementNS($cfdiNS, 'cfdi:Traslados');
 
-                    $tras = $dom->createElementNS($cfdiNS, 'cfdi:Traslado');
-                    $tras->setAttribute('Base', $this->fmt($base, 2));
-                    $tras->setAttribute('Impuesto', '002');
-                    $tras->setAttribute('TipoFactor', 'Tasa');
-                    $tras->setAttribute('TasaOCuota', $this->fmt($ivaTasaSimple, 6));
-                    $importe = max(0, $base * $ivaTasaSimple);
-                    $tras->setAttribute('Importe', $this->fmt($importe, 2));
+                    $tasa = ($ivaTasaSimple > 1.0) ? ($ivaTasaSimple / 100.0) : $ivaTasaSimple;
+                    $tasaOCuota = $fmt6($tasa);
 
-                    $trasNode->appendChild($tras);
+                    $impCents = (int) round(($baseCents / 100) * $tasa * 100);
+
+                    $t = $dom->createElementNS($cfdiNS, 'cfdi:Traslado');
+                    $t->setAttribute('Base', $fromCents($baseCents));
+                    $t->setAttribute('Impuesto', '002');
+                    $t->setAttribute('TipoFactor', 'Tasa');
+                    $t->setAttribute('TasaOCuota', $tasaOCuota);
+                    $t->setAttribute('Importe', $fromCents($impCents));
+                    $trasNode->appendChild($t);
+
                     $impuestosConceptoNode->appendChild($trasNode);
 
-                    $key = '002|Tasa|'.$this->fmt($ivaTasaSimple, 6);
-                    $trasAgg[$key] = $trasAgg[$key] ?? [
-                        'impuesto'=>'002','tipo_factor'=>'Tasa','tasa'=>$this->fmt($ivaTasaSimple,6),'importe'=>0.0
-                    ];
-                    $trasAgg[$key]['importe'] += $importe;
+                    $k = '002|Tasa|'.$tasaOCuota;
+                    if (!isset($trasAgg[$k])) {
+                        $trasAgg[$k] = ['impuesto'=>'002','tipo_factor'=>'Tasa','tasa'=>$tasaOCuota,'importe_cents'=>0,'base_cents'=>0];
+                    }
+                    $trasAgg[$k]['importe_cents'] += $impCents;
+                    $trasAgg[$k]['base_cents'] += $baseCents;
+
+                    $tieneImpuestos = true;
                 }
             }
 
-            // ObjetoImp (01 sin impuestos, 02 con impuestos)
+            // ObjetoImp
             $concepto->setAttribute('ObjetoImp', $tieneImpuestos ? '02' : '01');
 
             if ($impuestosConceptoNode) {
@@ -1585,42 +1610,40 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
 
         $c->appendChild($conceptosNode);
 
-        // ===== Impuestos globales (como en tu ejemplo) =====
-        $totalTras = 0.0;
-        foreach ($trasAgg as $row) $totalTras += (float)$row['importe'];
+        // ===== Impuestos globales =====
+        // Totales globales EN CENTAVOS (sumas exactas)
+        foreach ($trasAgg as $row) $totalTrasCents += (int)$row['importe_cents'];
+        foreach ($retAgg as $row)  $totalRetCents  += (int)$row['importe_cents'];
 
-        $totalRet = 0.0;
-        foreach ($retAgg as $row) $totalRet += (float)$row['importe'];
-
-        if ($totalTras > 0 || $totalRet > 0) {
+        if ($totalTrasCents > 0 || $totalRetCents > 0) {
             $impGlobal = $dom->createElementNS($cfdiNS, 'cfdi:Impuestos');
 
-            if ($totalRet > 0) $impGlobal->setAttribute('TotalImpuestosRetenidos', $this->fmt($totalRet, 2));
-            if ($totalTras > 0) $impGlobal->setAttribute('TotalImpuestosTrasladados', $this->fmt($totalTras, 2));
+            if ($totalRetCents > 0) $impGlobal->setAttribute('TotalImpuestosRetenidos', $fromCents($totalRetCents));
+            if ($totalTrasCents > 0) $impGlobal->setAttribute('TotalImpuestosTrasladados', $fromCents($totalTrasCents));
 
-            if ($totalRet > 0) {
+            if ($totalRetCents > 0) {
                 $rets = $dom->createElementNS($cfdiNS, 'cfdi:Retenciones');
                 foreach ($retAgg as $row) {
                     $r = $dom->createElementNS($cfdiNS, 'cfdi:Retencion');
                     $r->setAttribute('Impuesto', $row['impuesto']);
-                    $r->setAttribute('Importe', $this->fmt($row['importe'], 2));
+                    $r->setAttribute('Importe', $fromCents((int)$row['importe_cents']));
                     $rets->appendChild($r);
                 }
                 $impGlobal->appendChild($rets);
             }
 
-            if ($totalTras > 0) {
+            if ($totalTrasCents > 0) {
                 $tras = $dom->createElementNS($cfdiNS, 'cfdi:Traslados');
                 foreach ($trasAgg as $row) {
                     $t = $dom->createElementNS($cfdiNS, 'cfdi:Traslado');
                     $t->setAttribute('Impuesto', $row['impuesto']);
                     $t->setAttribute('TipoFactor', $row['tipo_factor']);
+                    $t->setAttribute('Base', $fromCents((int)$row['base_cents'])); // base REAL sumada por clave
+
                     if (strtolower($row['tipo_factor']) !== 'exento') {
                         $t->setAttribute('TasaOCuota', $row['tasa']);
-                        $t->setAttribute('Importe', $this->fmt($row['importe'], 2));
+                        $t->setAttribute('Importe', $fromCents((int)$row['importe_cents']));
                     }
-                    // Base global (en CFDI 4 normalmente se incluye Base en cada Traslado global)
-                    $t->setAttribute('Base', $this->fmt($subtotal - $descuento, 2));
                     $tras->appendChild($t);
                 }
                 $impGlobal->appendChild($tras);
@@ -1629,19 +1652,24 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
             $c->appendChild($impGlobal);
         }
 
-        // ===== SubTotal/Descuento/Total =====
-        $subTotalFinal = max(0, $subtotal);
-        $descuentoFinal = max(0, $descuento);
-        $totalFinal = max(0, ($subTotalFinal - $descuentoFinal) + $totalTras - $totalRet);
+        // ===== SubTotal/Descuento/Total (del comprobante) =====
+        $subTotalFinalCents  = max(0, $subTotalCents);
+        $descuentoFinalCents = max(0, $descuentoCents);
 
-        $c->setAttribute('SubTotal', $this->fmt($subTotalFinal, 2));
-        if ($descuentoFinal > 0) {
-            $c->setAttribute('Descuento', $this->fmt($descuentoFinal, 2));
+        $totalFinalCents = max(
+            0,
+            ($subTotalFinalCents - $descuentoFinalCents) + $totalTrasCents - $totalRetCents
+        );
+
+        $c->setAttribute('SubTotal', $fromCents($subTotalFinalCents));
+        if ($descuentoFinalCents > 0) {
+            $c->setAttribute('Descuento', $fromCents($descuentoFinalCents));
         }
-        $c->setAttribute('Total', $this->fmt($totalFinal, 2));
+        $c->setAttribute('Total', $fromCents($totalFinalCents));
 
         return $dom->saveXML();
     }
+
 
 
     private function fmt($n, int $decimals = 2): string
