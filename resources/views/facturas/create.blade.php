@@ -737,6 +737,11 @@
     uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2); },
     money(n){ n = Number(n||0); return n.toLocaleString('es-MX',{style:'currency',currency:'MXN'}); },
 
+    round2(n){
+      n = Number(n || 0);
+      return Math.round((n + Number.EPSILON) * 100) / 100;
+    },
+
     baseRow(r){
       const sub = Number(r.cantidad||0) * Number(r.precio||0);
       const des = Number(r.descuento||0);
@@ -754,24 +759,29 @@
       if (arr.length) {
         for (const i of arr){
           if (i.factor === 'Exento') continue;
+
+          // tu UI usa tasa en porcentaje (16), lo pasamos a 0.16
           const tasa = Number(i.tasa||0) / 100;
-          const m = base * tasa;
+
+          // CLAVE: redondeo por concepto
+          const m = this.round2(base * tasa);
+
           imp += (i.tipo === 'R' ? -m : m);
         }
-        return imp;
+        return this.round2(imp);
       }
 
       // compat simple
       if (r.aplica_iva) {
         const tasa = Number(r.iva_tasa ?? 0.16);
-        imp += base * tasa;
+        imp += this.round2(base * tasa);
       }
 
-      return imp;
+      return this.round2(imp);
     },
 
     importeRow(r){
-      return this.baseRow(r) + this.impuestosRow(r);
+       return this.round2(this.baseRow(r) + this.impuestosRow(r));
     },
 
     resumenImpuestos(r){
@@ -1088,17 +1098,21 @@
       for (const r of (this.form.conceptos || [])) {
         const qty = Number(r.cantidad||0);
         const precio = Number(r.precio||0);
-        subtotal += (qty * precio);
-        descuento += Number(r.descuento||0);
-        impuestos += this.impuestosRow(r);
+        const sub = this.round2(qty * precio);
+        const des = this.round2(Number(r.descuento||0));
+
+        subtotal = this.round2(subtotal + sub);
+        descuento = this.round2(descuento + des);
+
+        impuestos = this.round2(impuestos + this.impuestosRow(r));
       }
 
-      const baseLocal = Math.max(subtotal - descuento, 0);
-      const ret5 = this.form.impuestos_locales?.ret_5_millar ? (baseLocal * 0.005) : 0;
-      const retCed = this.form.impuestos_locales?.ret_cedular_2 ? (baseLocal * 0.02) : 0;
-      const retLocalTotal = ret5 + retCed;
+      const baseLocal = this.round2(Math.max(subtotal - descuento, 0));
+      const ret5 = this.form.impuestos_locales?.ret_5_millar ? this.round2(baseLocal * 0.005) : 0;
+      const retCed = this.form.impuestos_locales?.ret_cedular_2 ? this.round2(baseLocal * 0.02) : 0;
+      const retLocalTotal = this.round2(ret5 + retCed);
 
-      const total = subtotal - descuento + impuestos - retLocalTotal;
+      const total = this.round2(baseLocal + impuestos - retLocalTotal);
 
       this.totales = {
         subtotal,
