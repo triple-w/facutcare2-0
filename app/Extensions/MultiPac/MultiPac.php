@@ -296,6 +296,33 @@ class MultiPac {
     return $cand1; // para mostrar qué esperaba
 };
 
+    // -----------------------------
+    // Helpers para formato CFDI 3.3
+    // -----------------------------
+    $fmt2 = function($n): string {
+        return number_format((float)$n, 2, '.', '');
+    };
+
+    $fmt6 = function($n): string {
+        return number_format((float)$n, 6, '.', '');
+    };
+
+    // Acumulador de traslados globales: key = Impuesto|TipoFactor|TasaOCuota
+    $trasladosGlobal = []; // [key => ['Impuesto'=>..., 'TipoFactor'=>..., 'TasaOCuota'=>..., 'Importe'=>float]]
+    $addTrasladoGlobal = function(string $impuesto, string $tipoFactor, string $tasaOCuota, float $importe) use (&$trasladosGlobal) {
+        $key = $impuesto.'|'.$tipoFactor.'|'.$tasaOCuota;
+        if (!isset($trasladosGlobal[$key])) {
+            $trasladosGlobal[$key] = [
+                'Impuesto'   => $impuesto,
+                'TipoFactor' => $tipoFactor,
+                'TasaOCuota' => $tasaOCuota,
+                'Importe'    => 0.0,
+            ];
+        }
+        // suma a 2 decimales por seguridad
+        $trasladosGlobal[$key]['Importe'] = round($trasladosGlobal[$key]['Importe'] + $importe, 2);
+    };
+
 
     // -----------------------------
     // Tu código original (con paths corregidos)
@@ -395,13 +422,29 @@ class MultiPac {
         $concepto->setAttribute('Descuento', $conceptoData['Descuento']);
 
         foreach ($conceptoData['ImpuestosTrasladados'] as $trasladoData) {
+            $impuesto    = (string)($trasladoData['Impuesto'] ?? '002');     // IVA=002
+            $tipoFactor  = (string)($trasladoData['TipoFactor'] ?? 'Tasa');  // Tasa
+            $tasaOCuota  = $fmt6($trasladoData['TasaOCuota'] ?? 0.16);
+
+            // Base a 2 decimales (Importe - Descuento por concepto normalmente)
+            $base = (float)($trasladoData['Base'] ?? 0);
+            $base2 = $fmt2($base);
+
+            // Importe SIEMPRE como round(base * tasa, 2) para que global = suma por concepto
+            $importeCalc = round(((float)$base) * ((float)$tasaOCuota), 2);
+            $importe2 = $fmt2($importeCalc);
+
+            // Nodo traslado por concepto
             $traslado = $xml->createElement('cfdi:Traslado');
-            $traslado->setAttribute('Base', $trasladoData['Base']);
-            $traslado->setAttribute('Impuesto', $trasladoData['Impuesto']);
-            $traslado->setAttribute('TipoFactor', 'Tasa');
-            $traslado->setAttribute('TasaOCuota', $trasladoData['TasaOCuota']);
-            $traslado->setAttribute('Importe', $trasladoData['Importe']);
+            $traslado->setAttribute('Base', $base2);
+            $traslado->setAttribute('Impuesto', $impuesto);
+            $traslado->setAttribute('TipoFactor', $tipoFactor);
+            $traslado->setAttribute('TasaOCuota', $tasaOCuota);
+            $traslado->setAttribute('Importe', $importe2);
             $traslados->appendChild($traslado);
+
+            // Acumular al global (la clave del CFDI40221)
+            $addTrasladoGlobal($impuesto, $tipoFactor, $tasaOCuota, $importeCalc);
         }
 
         if ($traslados->childNodes->length > 0) {
@@ -419,25 +462,39 @@ class MultiPac {
     $comprobante->setAttribute('SubTotal', $data['SubTotal']);
     $comprobante->setAttribute('Descuento', $data['Descuento']);
 
-    $impuestosSuma = $xml->getElementsByTagName('cfdi:Impuestos')[($xml->getElementsByTagName('cfdi:Impuestos')->length) - 1];
-    $impuestosSuma->setAttribute('TotalImpuestosRetenidos', $data['TotalImpuestosRetenidos']);
-    $impuestosSuma->setAttribute('TotalImpuestosTrasladados', $data['TotalImpuestosTrasladados']);
+    // Obtener el cfdi:Impuestos GLOBAL (hijo directo del Comprobante)
+    $impuestosSuma = null;
+    foreach ($comprobante->childNodes as $n) {
+        if ($n->nodeType === XML_ELEMENT_NODE && $n->nodeName === 'cfdi:Impuestos') {
+            $impuestosSuma = $n;
+            break;
+        }
+    }
+    if (!$impuestosSuma) {
+        $impuestosSuma = $xml->createElement('cfdi:Impuestos');
+        $comprobante->appendChild($impuestosSuma);
+    }
 
-    $retencionesSuma = $xml->createElement('cfdi:Retenciones');
+    // Construir Traslados globales desde lo sumado por concepto
     $trasladosSuma = $xml->createElement('cfdi:Traslados');
 
-    foreach ($data['trasladosSuma'] as $trasladoSumaData) {
+    $totalTrasladados = 0.0;
+    foreach ($trasladosGlobal as $row) {
+        $totalTrasladados = round($totalTrasladados + (float)$row['Importe'], 2);
+
         $trasladoSuma = $xml->createElement('cfdi:Traslado');
-        $trasladoSuma->setAttribute('Impuesto', $trasladoSumaData['Impuesto']);
-        $trasladoSuma->setAttribute('TipoFactor', $trasladoSumaData['TipoFactor']);
-        $trasladoSuma->setAttribute('TasaOCuota', $trasladoSumaData['TasaOCuota']);
-        $trasladoSuma->setAttribute('Importe', $trasladoSumaData['Importe']);
+        $trasladoSuma->setAttribute('Impuesto', $row['Impuesto']);
+        $trasladoSuma->setAttribute('TipoFactor', $row['TipoFactor']);
+        $trasladoSuma->setAttribute('TasaOCuota', $row['TasaOCuota']);
+        $trasladoSuma->setAttribute('Importe', $fmt2($row['Importe']));
         $trasladosSuma->appendChild($trasladoSuma);
     }
 
     if ($trasladosSuma->childNodes->length > 0) {
         $impuestosSuma->appendChild($trasladosSuma);
+        $impuestosSuma->setAttribute('TotalImpuestosTrasladados', $fmt2($totalTrasladados));
     }
+
 
     // -----------------------------
     // ✅ AQUI: PATHS CORREGIDOS (CER/KEY)
@@ -482,7 +539,7 @@ class MultiPac {
     $params = [
         'cfdiB64' => base64_encode($doc),
     ];
-
+    file_put_contents(storage_path('logs/xml_debug_cfdi.xml'), $doc);
     $response = self::callTimbrarCFDI($params);
     if (is_string($response)) {
         return false;
