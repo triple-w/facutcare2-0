@@ -325,23 +325,57 @@
         <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">Conceptos</h2>
 
         <div class="flex items-end gap-2">
-          <div>
-            <label class="block text-xs text-gray-500">Buscar producto</label>
-            <input type="text" class="form-input w-72" placeholder="Código o descripción"
-                   x-model="buscaProd.query" @input.debounce.250ms="buscarProductoGlobal()">
-          </div>
+                <div class="relative">
+          <label class="block text-xs text-gray-500">Buscar producto</label>
 
-          <div>
-            <label class="block text-xs text-gray-500">Resultados</label>
-            <select size="1" class="form-select w-72"
-                    x-model="buscaProd.selectedId"
-                    @change="agregarProductoDesdeBuscador()">
-              <option value="">— Selecciona —</option>
+          <input type="text"
+                class="form-input w-72"
+                placeholder="Código o descripción"
+                x-model="buscaProd.query"
+                @input.debounce.250ms="buscarProductoGlobal()"
+                @focus="buscaProd.open = true; if((buscaProd.query||'').trim().length >= 2) buscarProductoGlobal()"
+                @keydown.escape="buscaProd.open = false"
+          />
+
+          {{-- Dropdown resultados --}}
+          <div
+            x-show="buscaProd.open && buscaProd.suggestions.length"
+            x-transition
+            class="absolute z-30 mt-1 w-72 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden"
+            style="display:none">
+            <ul class="max-h-64 overflow-auto">
               <template x-for="p in buscaProd.suggestions" :key="p.id">
-                <option :value="String(p.id)" x-text="`${p.clave || ''} ${p.descripcion}`"></option>
+                <li>
+                  <button type="button"
+                          class="w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+                          @click="agregarProductoDesdeBuscador(p)">
+                    <div class="text-sm font-medium">
+                      <span class="font-mono text-xs text-gray-500" x-text="p.clave || ''"></span>
+                      <span class="ml-2" x-text="p.descripcion"></span>
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      <span x-text="(p.clave_prod_serv ? ('ProdServ: '+p.clave_prod_serv) : '')"></span>
+                      <span x-show="p.clave_unidad" class="ml-2" x-text="'Unidad: '+p.clave_unidad"></span>
+                      <span x-show="p.precio !== undefined" class="ml-2" x-text="'$'+Number(p.precio||0).toFixed(2)"></span>
+                    </div>
+                  </button>
+                </li>
               </template>
-            </select>
+            </ul>
+
+            <div class="px-3 py-2 text-xs text-gray-500 border-t border-gray-200 dark:border-gray-700">
+              Mostrando <span x-text="buscaProd.suggestions.length"></span> resultados
+            </div>
           </div>
+        </div>
+
+        {{-- (Opcional) botón para forzar búsqueda --}}
+        <button type="button"
+                class="btn-sm bg-gray-100 hover:opacity-90"
+                @click="buscaProd.open = true; buscarProductoGlobal()"
+                :disabled="(buscaProd.query||'').trim().length < 2">
+          Buscar
+        </button>
 
           <button type="button"
                   class="btn-sm bg-gray-900 dark:bg-gray-700 text-white hover:opacity-90"
@@ -737,7 +771,7 @@
     clienteEdit: {},
 
     // buscador de productos
-    buscaProd: { query: '', suggestions: [], selectedId: '' },
+    buscaProd: { query: '', suggestions: [], selectedId: '', open: false },
 
     buscaCliente: { q: '', items: [], open: false },
 
@@ -1033,7 +1067,11 @@
 
     async buscarProductoGlobal(){
       const q = (this.buscaProd.query || '').trim();
-      if (q.length < 2) { this.buscaProd.suggestions = []; return; }
+      if (q.length < 2) {
+        this.buscaProd.suggestions = [];
+        this.buscaProd.open = false;
+        return;
+      }
 
       try {
         const url = new URL(this.opts.endpoints.buscarProductos, window.location.origin);
@@ -1041,37 +1079,52 @@
 
         const r = await fetch(url.toString(), { headers: { 'Accept':'application/json' } });
         const list = await r.json().catch(()=>[]);
-        // tu ProductosApiController regresa array directo
         this.buscaProd.suggestions = Array.isArray(list) ? list : (Array.isArray(list.data) ? list.data : []);
+
+        this.buscaProd.open = true; // 👈 abre dropdown al tener resultados
       } catch(e) {
         console.error(e);
+        this.buscaProd.suggestions = [];
+        this.buscaProd.open = false;
       }
     },
 
-    agregarProductoDesdeBuscador(){
-      const id = Number(this.buscaProd.selectedId || 0);
-      const p = (this.buscaProd.suggestions || []).find(x => Number(x.id) === id);
-      if (!p) return;
+
+    agregarProductoDesdeBuscador(p = null){
+      // 1) si viene producto directo desde click, úsalo
+      let prod = p;
+
+      // 2) fallback: si algún día lo llamas por selectedId, sigue funcionando
+      if (!prod) {
+        const id = Number(this.buscaProd.selectedId || 0);
+        prod = (this.buscaProd.suggestions || []).find(x => Number(x.id) === id);
+      }
+
+      if (!prod) return;
 
       this.form.conceptos.push({
         uid: this.uid(),
-        descripcion: p.descripcion || '',
-        clave_prod_serv: p.clave_prod_serv || '',
-        clave_unidad: p.clave_unidad || '',
-        unidad: p.unidad || '',
+        descripcion: prod.descripcion || '',
+        clave_prod_serv: prod.clave_prod_serv || '',
+        clave_unidad: prod.clave_unidad || '',
+        unidad: prod.unidad || '',
         cantidad: 1,
-        precio: Number(p.precio || 0),
+        precio: Number(prod.precio || 0),
         descuento: 0,
         impuestos: [],
         aplica_iva: true,
         iva_tasa: 0.16,
       });
 
+      // limpiar buscador
       this.buscaProd.selectedId = '';
       this.buscaProd.query = '';
       this.buscaProd.suggestions = [];
+      this.buscaProd.open = false;
+
       this.recalcularTotales();
     },
+
 
     // ===== Impuestos modal =====
     abrirImpuestos(idx){
