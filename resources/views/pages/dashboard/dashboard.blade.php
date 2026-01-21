@@ -15,16 +15,8 @@
                 <!-- Filter button -->
                 <x-dropdown-filter align="right" />
 
-                <form method="GET" action="{{ route('dashboard') }}">
-                    <select name="range"
-                            class="form-select dark:bg-gray-800 text-gray-600 dark:text-gray-300 font-medium"
-                            onchange="this.form.submit()">
-                        <option value="month" @selected(($range ?? 'month') === 'month')>Este mes</option>
-                        <option value="3m" @selected(($range ?? '') === '3m')>Ultimos 3 meses</option>
-                        <option value="6m" @selected(($range ?? '') === '6m')>Ultimo semestre</option>
-                        <option value="12m" @selected(($range ?? '') === '12m')>Ultimo ano</option>
-                    </select>
-                </form>
+                <!-- Datepicker built with flatpickr -->
+                <x-datepicker />
 
                 <!-- Add view button -->
                 <button class="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white">
@@ -42,13 +34,13 @@
         <div class="grid grid-cols-12 gap-6">
 
             <!-- Line chart (Acme Plus) -->
-            <x-dashboard.dashboard-card-01 :dataFeed="$dataFeed" :kpis="$kpis" />
+            <x-dashboard.dashboard-card-01 :dataFeed="$dataFeed" />
 
             <!-- Line chart (Acme Advanced) -->
-            <x-dashboard.dashboard-card-02 :dataFeed="$dataFeed" :kpis="$kpis" />
+            <x-dashboard.dashboard-card-02 :dataFeed="$dataFeed" />
 
             <!-- Line chart (Acme Professional) -->
-            <x-dashboard.dashboard-card-03 :dataFeed="$dataFeed" :kpis="$kpis" />
+            <x-dashboard.dashboard-card-03 :dataFeed="$dataFeed" />
 
             <!-- Bar chart (Direct vs Indirect) -->
             <x-dashboard.dashboard-card-04 />
