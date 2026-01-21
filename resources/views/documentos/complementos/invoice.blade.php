@@ -19,15 +19,15 @@
         </div>
 
         <div class="mt-4 flex gap-2">
-            <a class="btn bg-gray-100 dark:bg-gray-700" target="_blank"
-               href="data:application/xml;charset=utf-8,{{ urlencode($comp->xml) }}">
-                Ver XML
+            <a class="btn bg-gray-100 dark:bg-gray-700"
+               href="{{ route('complementos.xml', $comp->id) }}">
+                Descargar XML
             </a>
 
             @if(!empty($comp->pdf))
-                <a class="btn btn-primary" target="_blank"
-                   href="data:application/pdf;base64,{{ $comp->pdf }}">
-                    Ver PDF
+                <a class="btn btn-primary"
+                   href="{{ route('complementos.pdf', $comp->id) }}">
+                    Descargar PDF
                 </a>
             @endif
         </div>
