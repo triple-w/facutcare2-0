@@ -121,9 +121,9 @@ class DashboardController extends Controller
     {
         $base = DB::table('facturas')
             ->where('users_id', $userId)
-            ->where('tipo_comprobante', strtoupper($tipo))
             ->whereNotIn('estatus', ['CANCELADA', 'CANCELADO']);
 
+        $this->applyFacturasTipoFilter($base, $tipo);
         $this->applyFacturasDateFilter($base, $start, $end);
 
         if (Schema::hasColumn('facturas', 'total')) {
@@ -158,9 +158,9 @@ class DashboardController extends Controller
     {
         $base = DB::table('facturas')
             ->where('users_id', $userId)
-            ->where('tipo_comprobante', strtoupper($tipo))
             ->whereNotIn('estatus', ['CANCELADA', 'CANCELADO']);
 
+        $this->applyFacturasTipoFilter($base, $tipo);
         $this->applyFacturasDateFilter($base, $start, $end);
 
         if (Schema::hasColumn('facturas', 'total')) {
@@ -271,19 +271,34 @@ class DashboardController extends Controller
         $startStr = $start->format('Y-m-d H:i:s');
         $endStr = $end->format('Y-m-d H:i:s');
 
-        $query->where(function ($q) use ($startStr, $endStr) {
-            $q->whereBetween('fecha_factura', [$startStr, $endStr])
-              ->orWhereBetween('fecha', [$startStr, $endStr]);
-        });
+        $query->whereBetween(
+            DB::raw('COALESCE(fecha_factura, fecha, created_at)'),
+            [$startStr, $endStr]
+        );
+    }
+
+    private function applyFacturasTipoFilter($query, string $tipo): void
+    {
+        $tipo = strtoupper(trim($tipo));
+        $values = [$tipo];
+        if ($tipo === 'I') {
+            $values[] = 'INGRESO';
+            $values[] = 'INGRESOS';
+        } elseif ($tipo === 'E') {
+            $values[] = 'EGRESO';
+            $values[] = 'EGRESOS';
+        }
+
+        $query->whereRaw('UPPER(tipo_comprobante) IN ('.implode(',', array_fill(0, count($values), '?')).')', $values);
     }
 
     private function countFacturas(int $userId, string $tipo, Carbon $start, Carbon $end): int
     {
         $q = DB::table('facturas')
             ->where('users_id', $userId)
-            ->where('tipo_comprobante', strtoupper($tipo))
             ->whereNotIn('estatus', ['CANCELADA', 'CANCELADO']);
 
+        $this->applyFacturasTipoFilter($q, $tipo);
         $this->applyFacturasDateFilter($q, $start, $end);
 
         return (int)$q->count();
