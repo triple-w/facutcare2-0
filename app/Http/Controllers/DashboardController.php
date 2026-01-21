@@ -271,10 +271,17 @@ class DashboardController extends Controller
         $startStr = $start->format('Y-m-d H:i:s');
         $endStr = $end->format('Y-m-d H:i:s');
 
-        $query->whereBetween(
-            DB::raw('COALESCE(fecha_factura, fecha, created_at)'),
-            [$startStr, $endStr]
-        );
+        $cols = [];
+        if (Schema::hasColumn('facturas', 'fecha_factura')) $cols[] = 'fecha_factura';
+        if (Schema::hasColumn('facturas', 'fecha')) $cols[] = 'fecha';
+        if (Schema::hasColumn('facturas', 'created_at')) $cols[] = 'created_at';
+
+        if (empty($cols)) {
+            return;
+        }
+
+        $coalesce = 'COALESCE(' . implode(', ', $cols) . ')';
+        $query->whereBetween(DB::raw($coalesce), [$startStr, $endStr]);
     }
 
     private function applyFacturasTipoFilter($query, string $tipo): void
