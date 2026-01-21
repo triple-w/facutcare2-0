@@ -16,7 +16,7 @@ class ComplementosController extends Controller
 
     use PacMultipacTrait;
     // =========================
-    // LISTADO
+    // LISTADO cambio para visualizarlo en el comit
     // =========================
     public function index(Request $request)
     {
