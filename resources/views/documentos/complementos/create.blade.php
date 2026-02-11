@@ -107,6 +107,16 @@
         </p>
       </div>
 
+      {{-- Fecha documento --}}
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fecha del documento</label>
+        <input type="datetime-local"
+               class="form-input w-full"
+               x-model="form.fecha_documento"
+               @change="recalcular()">
+        <p class="mt-2 text-xs text-gray-500">Se usa en el atributo Fecha del CFDI (Comprobante).</p>
+      </div>
+
       {{-- Fecha pago --}}
       <div>
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fecha de pago</label>
@@ -114,7 +124,7 @@
                class="form-input w-full"
                x-model="form.fecha_pago"
                @change="recalcular()">
-        <p class="mt-2 text-xs text-gray-500">Si no tienes hora exacta, usa 12:00.</p>
+        <p class="mt-2 text-xs text-gray-500">Se usa en el nodo Pago@FechaPago.</p>
       </div>
 
       {{-- Serie/Folio Complemento --}}
@@ -562,6 +572,7 @@
     // form
     form: {
       cliente_id: '',
+      fecha_documento: '',
       fecha_pago: '',
 
       // folio complemento
@@ -607,7 +618,8 @@
       const pad = (x) => String(x).padStart(2,'0');
       const local = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
-      this.form.fecha_pago = (p?.fecha_pago) ? p.fecha_pago : local;
+      this.form.fecha_documento = (p?.fecha_documento) ? p.fecha_documento : ((p?.fecha_pago) ? p.fecha_pago : local);
+      this.form.fecha_pago = (p?.fecha_pago) ? p.fecha_pago : ((p?.fecha_documento) ? p.fecha_documento : local);
 
       // Cliente
       if (p?.cliente_id) {
@@ -972,6 +984,8 @@
 
     previsualizar(){
       if (!this.form.cliente_id) { alert('Selecciona un cliente'); return; }
+      if (!this.form.fecha_documento) { alert('Captura la fecha del documento'); return; }
+      if (!this.form.fecha_pago) { alert('Captura la fecha de pago'); return; }
       if (!Array.isArray(this.form.pagos) || !this.form.pagos.length) {
         alert('Agrega al menos una factura pendiente');
         return;
@@ -989,6 +1003,7 @@
 
       const payload = {
         cliente_id: Number(this.form.cliente_id),
+        fecha_documento: this.form.fecha_documento,
         fecha_pago: this.form.fecha_pago,
 
         // folio complemento

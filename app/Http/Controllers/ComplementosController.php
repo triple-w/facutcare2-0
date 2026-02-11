@@ -151,7 +151,9 @@ class ComplementosController extends Controller
         $payload['serie_pago'] = (string)($payload['serie_pago'] ?? '');
         $payload['folio_pago'] = (int)($payload['folio_pago'] ?? 0);
 
-        $payload['fecha_pago'] = (string)($payload['fecha_pago'] ?? '');
+        // Compatibilidad: si falta una fecha, toma la otra.
+        $payload['fecha_documento'] = (string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? ''));
+        $payload['fecha_pago']      = (string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? ''));
 
         $payload['forma_pago_p']   = (string)($payload['forma_pago_p'] ?? '03');
         $payload['moneda_p']       = (string)($payload['moneda_p'] ?? 'MXN');
@@ -669,6 +671,10 @@ class ComplementosController extends Controller
 
     private function normalizePayloadPagos(array $payload): array
     {
+        // Compatibilidad con drafts anteriores.
+        $payload['fecha_documento'] = (string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? ''));
+        $payload['fecha_pago']      = (string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? ''));
+
         $payload['forma_pago_p']  = (string)($payload['forma_pago_p'] ?? '03');
         $payload['moneda_p']      = (string)($payload['moneda_p'] ?? 'MXN');
         $payload['tipo_cambio_p'] = (float)($payload['tipo_cambio_p'] ?? 1);
@@ -887,7 +893,8 @@ class ComplementosController extends Controller
 
     private function buildCfdiPagos20Xml(array $payload, $cliente, array $emisor, string $serie, int $folio, array $csd): string
     {
-        $fecha = Carbon::parse($payload['fecha_pago'])->format('Y-m-d\TH:i:s');
+        $fechaDocumento = Carbon::parse((string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? '')))->format('Y-m-d\TH:i:s');
+        $fechaPago      = Carbon::parse((string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? '')))->format('Y-m-d\TH:i:s');
 
         $certB64 = base64_encode(file_get_contents($csd['cer_path']));
         $noCert  = (string)($csd['no_certificado'] ?? '');
@@ -918,7 +925,7 @@ class ComplementosController extends Controller
         $comprobante->setAttribute('Version', '4.0');
         $comprobante->setAttribute('Serie', $serie);
         $comprobante->setAttribute('Folio', (string)$folio);
-        $comprobante->setAttribute('Fecha', $fecha);
+        $comprobante->setAttribute('Fecha', $fechaDocumento);
 
         $comprobante->setAttribute('Sello', ''); // MultiPac lo genera con keyPEM
         $comprobante->setAttribute('NoCertificado', $noCert);
@@ -976,7 +983,7 @@ class ComplementosController extends Controller
 
         // Un solo nodo Pago (multi-docto)
         $pago = $dom->createElement('pago20:Pago');
-        $pago->setAttribute('FechaPago', $fecha);
+        $pago->setAttribute('FechaPago', $fechaPago);
         $pago->setAttribute('FormaDePagoP', $formaPagoP);
         $pago->setAttribute('MonedaP', $monedaP);
 
@@ -1293,6 +1300,7 @@ private function insertComplementoDb(int $userId, array $payload, $cliente, arra
         'serie'    => (string)($payload['serie_pago'] ?? ''),
         'folio'    => (int)($payload['folio_pago'] ?? 0),
 
+        'fecha_documento' => (string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? '')),
         'fecha_pago' => (string)($payload['fecha_pago'] ?? ''),
         'cliente_id' => (int)($payload['cliente_id'] ?? 0),
 
@@ -1906,10 +1914,14 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $serie = trim((string)($payload['serie_pago'] ?? ($payload['serie'] ?? '')));
         $folio = trim((string)($payload['folio_pago'] ?? ($payload['folio'] ?? '')));
 
-        $fechaPago = (string)($payload['fecha_pago'] ?? '');
-        if ($fechaPago === '') throw new \RuntimeException('Falta fecha_pago.');
+        $fechaDocumentoRaw = (string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? ''));
+        $fechaPagoRaw      = (string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? ''));
 
-        $fechaCfdi = date('Y-m-d\TH:i:s', strtotime($fechaPago));
+        if ($fechaDocumentoRaw === '') throw new \RuntimeException('Falta fecha_documento.');
+        if ($fechaPagoRaw === '') throw new \RuntimeException('Falta fecha_pago.');
+
+        $fechaCfdi = date('Y-m-d\TH:i:s', strtotime($fechaDocumentoRaw));
+        $fechaPago = date('Y-m-d\TH:i:s', strtotime($fechaPagoRaw));
 
         $formaPagoP  = (string)($payload['forma_pago_p'] ?? '03');
         $monedaP     = (string)($payload['moneda_p'] ?? 'MXN');
@@ -2023,7 +2035,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
 
         // Pago (un solo Pago que contiene múltiples DoctoRelacionado)
         $pagoNode = $dom->createElementNS($pagoNs, 'pago20:Pago');
-        $pagoNode->setAttribute('FechaPago', $fechaCfdi);
+        $pagoNode->setAttribute('FechaPago', $fechaPago);
         $pagoNode->setAttribute('FormaDePagoP', $formaPagoP);
         $pagoNode->setAttribute('MonedaP', $monedaP);
         $pagoNode->setAttribute('TipoCambioP', ($monedaP !== 'MXN') ? $this->fmtTc($tipoCambioP) : '1');
@@ -2246,6 +2258,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             'codigo_postal' => (string)($cliente->codigo_postal ?? ''),
             'serie' => (string)($payload['serie'] ?? ''),
             'folio' => (string)($payload['folio'] ?? ''),
+            'fecha_documento' => (string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? '')),
             'fecha_pago' => (string)($payload['fecha_pago'] ?? ''),
             'forma_pago_p' => (string)($payload['forma_pago_p'] ?? ''),
             'moneda_p' => (string)($payload['moneda_p'] ?? ''),

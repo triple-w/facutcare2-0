@@ -20,6 +20,9 @@
         <div class="text-sm text-gray-500">{{ $cliente->rfc ?? '' }}</div>
 
         <div class="mt-2 text-sm text-gray-700 dark:text-gray-300">
+          Fecha documento: <b>{{ $payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? '') }}</b>
+        </div>
+        <div class="mt-1 text-sm text-gray-700 dark:text-gray-300">
           Fecha pago: <b>{{ $payload['fecha_pago'] ?? '' }}</b>
         </div>
       </div>
