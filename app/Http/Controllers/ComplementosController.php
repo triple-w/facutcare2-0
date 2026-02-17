@@ -183,8 +183,9 @@ class ComplementosController extends Controller
             $saldoAnterior = (float)($p['saldo_anterior'] ?? 0);
             $montoPago     = (float)($p['monto_pago'] ?? 0);
             $montoPago     = max($montoPago, 0);
-
-            $saldoInsoluto = $saldoAnterior - $montoPago;
+            $saldoInsoluto = array_key_exists('saldo_insoluto', $p)
+                ? (float)($p['saldo_insoluto'] ?? 0)
+                : ($saldoAnterior - $montoPago);
             $saldoInsoluto = max(round($saldoInsoluto, 2), 0);
 
             $p['saldo_anterior']  = round($saldoAnterior, 2);
@@ -516,13 +517,29 @@ class ComplementosController extends Controller
                 throw new \RuntimeException($msgHumano ?: ($message ?: 'Cancelacion rechazada por el PAC.'));
             }
 
-            DB::table('complementos')
-                ->where('id', $comp->id)
-                ->where('users_id', $userId)
-                ->update([
-                    'estatus' => 'CANCELADA',
-                    'acuse' => $acuse !== '' ? $acuse : (string)($comp->acuse ?? ''),
-                ]);
+            DB::transaction(function () use ($comp, $userId, $acuse) {
+                DB::table('complementos')
+                    ->where('id', $comp->id)
+                    ->where('users_id', $userId)
+                    ->update([
+                        'estatus' => 'CANCELADA',
+                        'acuse' => $acuse !== '' ? $acuse : (string)($comp->acuse ?? ''),
+                    ]);
+
+                if (Schema::hasTable('complementos_pagos')) {
+                    $updates = [
+                        'saldo_insoluto' => DB::raw('saldo_anterior'),
+                    ];
+                    if (Schema::hasColumn('complementos_pagos', 'updated_at')) {
+                        $updates['updated_at'] = now();
+                    }
+                    DB::table('complementos_pagos')
+                        ->where('users_complementos_id', $comp->id)
+                        ->update($updates);
+                }
+
+                $this->consumirTimbre($userId);
+            });
 
             return back()->with('success', 'Complemento cancelado correctamente.');
 
@@ -629,7 +646,7 @@ class ComplementosController extends Controller
             $out[] = [
                 'id' => (int)($r->id ?? 0),
                 'serie' => $serie,
-                'siguiente' => max(1, $actual + 0),
+                'siguiente' => max(1, $actual),
             ];
         }
 
@@ -653,7 +670,8 @@ class ComplementosController extends Controller
 
         if (Schema::hasTable('complementos')) {
             $q->join('complementos as c', 'c.id', '=', 'cp.users_complementos_id')
-              ->where('c.users_id', $userId);
+              ->where('c.users_id', $userId)
+              ->whereNotIn(DB::raw('UPPER(c.estatus)'), ['CANCELADA', 'CANCELADO']);
         }
 
         $last = $q->orderByDesc('cp.id')->first(['cp.saldo_insoluto']);
@@ -692,10 +710,16 @@ class ComplementosController extends Controller
             if (!is_array($p)) $p = [];
             $saldoAnt = (float)($p['saldo_anterior'] ?? 0);
             $pagado   = max((float)($p['monto_pago'] ?? 0), 0);
+            $saldoInsolutoInput = array_key_exists('saldo_insoluto', $p)
+                ? (float)($p['saldo_insoluto'] ?? 0)
+                : null;
 
             $p['saldo_anterior'] = round($saldoAnt, 2);
             $p['monto_pago']     = round($pagado, 2);
-            $p['saldo_insoluto'] = max(round($saldoAnt - $pagado, 2), 0);
+            if ($saldoInsolutoInput === null) {
+                $saldoInsolutoInput = $saldoAnt - $pagado;
+            }
+            $p['saldo_insoluto'] = max(round($saldoInsolutoInput, 2), 0);
 
             $p['num_parcialidad'] = (int)($p['num_parcialidad'] ?? 1);
             $p['moneda_dr']       = (string)($p['moneda_dr'] ?? 'MXN');
@@ -1383,7 +1407,8 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
 
         if (Schema::hasTable('complementos')) {
             $q->join('complementos as c', 'c.id', '=', 'cp.users_complementos_id')
-              ->where('c.users_id', $userId);
+              ->where('c.users_id', $userId)
+              ->whereNotIn(DB::raw('UPPER(c.estatus)'), ['CANCELADA', 'CANCELADO']);
         }
 
         $maxPar = (int)($q->max('cp.parcialidad') ?? 0);
@@ -1642,11 +1667,23 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         if ($serieUI !== '') $payload['serie'] = $serieUI;
         if ($folioUI !== '' && $folioUI !== '0') $payload['folio'] = (string)$folioUI;
 
-        // Si YA hay serie/folio, solo aseguramos los _pago
+        // Si YA hay serie/folio, aseguramos los _pago y resolvemos folio_id para avanzar +1 al timbrar.
         $serie = trim((string)($payload['serie'] ?? ''));
         $folio = trim((string)($payload['folio'] ?? ''));
 
         if ($serie !== '' && $folio !== '' && $folio !== '0') {
+            if (empty($payload['folio_id']) && Schema::hasTable('folios')) {
+                $qFind = DB::table('folios')->where('users_id', $userId)->where('serie', $serie);
+                if (Schema::hasColumn('folios', 'tipo_documento')) {
+                    $qFind->whereIn('tipo_documento', ['PAGO', 'P']);
+                } elseif (Schema::hasColumn('folios', 'tipo')) {
+                    $qFind->whereIn('tipo', ['PAGO', 'P']);
+                }
+                $folioDb = $qFind->orderBy('id')->first(['id']);
+                if ($folioDb) {
+                    $payload['folio_id'] = (int)$folioDb->id;
+                }
+            }
             $payload['serie_pago'] = $serie;
             $payload['folio_pago'] = (int)$folio;
             return $payload;
@@ -1662,9 +1699,9 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $q = DB::table('folios')->where('users_id', $userId);
 
         if (Schema::hasColumn('folios', 'tipo_documento')) {
-            $q->where('tipo_documento', 'PAGO');
+            $q->whereIn('tipo_documento', ['PAGO', 'P']);
         } elseif (Schema::hasColumn('folios', 'tipo')) {
-            $q->where('tipo', 'PAGO');
+            $q->whereIn('tipo', ['PAGO', 'P']);
         }
 
         if ($folioId > 0) $q->where('id', $folioId);
@@ -2270,6 +2307,13 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             if (Schema::hasColumn($tabla, $col)) {
                 $insert[$col] = $val;
             }
+        }
+
+        if (Schema::hasColumn($tabla, 'serie') && !empty($payload['serie_pago'])) {
+            $insert['serie'] = (string)$payload['serie_pago'];
+        }
+        if (Schema::hasColumn($tabla, 'folio') && !empty($payload['folio_pago'])) {
+            $insert['folio'] = (string)$payload['folio_pago'];
         }
 
         $compId = DB::table('complementos')->insertGetId($insert);

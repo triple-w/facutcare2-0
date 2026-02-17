@@ -253,7 +253,14 @@
                 <span x-text="p.uuid"></span>
               </td>
 
-              <td class="px-3 py-2 text-right" x-text="money(p.saldo_anterior)"></td>
+              <td class="px-3 py-2 text-right">
+                <input type="number"
+                       step="0.01"
+                       min="0"
+                       class="form-input w-32 text-right"
+                       x-model.number="p.saldo_anterior"
+                       @input.debounce.150ms="recalcular()">
+              </td>
 
               <td class="px-3 py-2 text-right">
                 <input type="number"
@@ -264,7 +271,14 @@
                        @input.debounce.150ms="recalcular()">
               </td>
 
-              <td class="px-3 py-2 text-right" x-text="money(p.saldo_insoluto)"></td>
+              <td class="px-3 py-2 text-right">
+                <input type="number"
+                       step="0.01"
+                       min="0"
+                       class="form-input w-32 text-right"
+                       x-model.number="p.saldo_insoluto"
+                       @input.debounce.150ms="recalcular()">
+              </td>
 
               <td class="px-3 py-2 text-center">
                 <input type="number"
@@ -948,7 +962,8 @@
         const pagado   = Math.max(Number(p.monto_pago || 0), 0);
         p.monto_pago = pagado;
 
-        p.saldo_insoluto = Math.max(Math.round((saldoAnt - pagado) * 100) / 100, 0);
+        p.saldo_anterior = Math.max(Math.round(saldoAnt * 100) / 100, 0);
+        p.saldo_insoluto = Math.max(Math.round(Number(p.saldo_insoluto || 0) * 100) / 100, 0);
 
         total += pagado;
 

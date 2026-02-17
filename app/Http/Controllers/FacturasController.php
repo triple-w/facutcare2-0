@@ -2292,6 +2292,33 @@ private function parseCfdiParties(string $xml): array
         // (Opcional) aquí podrías registrar un movimiento en timbres_movs si lo quieres auditable
     }
 
+    private function consumirTimbreSolo(int $userId): void
+    {
+        $u = \DB::table('users')
+            ->where('id', $userId)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$u) {
+            throw new \RuntimeException("No existe el usuario {$userId}.");
+        }
+
+        if (!isset($u->timbres_disponibles)) {
+            throw new \RuntimeException('La columna users.timbres_disponibles no existe o no está disponible.');
+        }
+
+        $actual = (int)$u->timbres_disponibles;
+        if ($actual <= 0) {
+            throw new \RuntimeException('No tienes timbres disponibles para cancelar.');
+        }
+
+        \DB::table('users')
+            ->where('id', $userId)
+            ->update([
+                'timbres_disponibles' => $actual - 1,
+            ]);
+    }
+
 
 
 
@@ -2451,13 +2478,16 @@ private function parseCfdiParties(string $xml): array
                 throw new \RuntimeException($msgHumano ?: ($message ?: 'Cancelación rechazada por el PAC.'));
             }
 
-            // Guardar en DB
-            DB::table('facturas')
-                ->where('id', $factura->id)
-                ->update([
-                    'estatus' => 'CANCELADA',
-                    'acuse' => $acuse !== '' ? $acuse : (string)($factura->acuse ?? ''),
-                ]);
+            DB::transaction(function () use ($factura, $acuse, $userId) {
+                DB::table('facturas')
+                    ->where('id', $factura->id)
+                    ->update([
+                        'estatus' => 'CANCELADA',
+                        'acuse' => $acuse !== '' ? $acuse : (string)($factura->acuse ?? ''),
+                    ]);
+
+                $this->consumirTimbreSolo($userId);
+            });
 
             return back()->with('success', 'Factura cancelada correctamente.');
 
