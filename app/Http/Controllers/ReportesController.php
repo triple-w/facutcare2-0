@@ -85,14 +85,11 @@ class ReportesController extends Controller
         }
 
         return $q->orderByDesc('id')
-            ->get(['id', 'serie', 'folio', 'uuid', 'rfc', 'razon_social', 'estatus', 'tipo_comprobante', 'fecha', 'fecha_factura', 'created_at', 'total', 'xml'])
+            ->get($this->facturasReportColumns())
             ->map(function ($row) {
                 $row->documento = strtoupper((string) ($row->tipo_comprobante ?? '')) === 'E' ? 'Nota de crédito' : 'Factura';
                 $row->fecha = $row->fecha_factura ?? $row->fecha ?? $row->created_at ?? null;
-                $row->total_calculado = (float) ($row->total ?? 0);
-                if ($row->total_calculado <= 0) {
-                    $row->total_calculado = $this->parseFacturaTotal((string) ($row->xml ?? ''));
-                }
+                $row->total_calculado = $this->extractFacturaTotal($row);
                 return $row;
             });
     }
@@ -182,6 +179,26 @@ class ReportesController extends Controller
         }
 
         $query->whereRaw('UPPER(TRIM(COALESCE(tipo_comprobante, ""))) IN (' . implode(',', array_fill(0, count($values), '?')) . ')', $values);
+    }
+
+    private function facturasReportColumns(): array
+    {
+        $columns = ['id', 'serie', 'folio', 'uuid', 'rfc', 'razon_social', 'estatus', 'tipo_comprobante', 'fecha', 'fecha_factura', 'created_at', 'xml'];
+        if (Schema::hasColumn('facturas', 'total')) {
+            $columns[] = 'total';
+        }
+
+        return $columns;
+    }
+
+    private function extractFacturaTotal(object $row): float
+    {
+        $total = property_exists($row, 'total') ? (float) ($row->total ?? 0) : 0.0;
+        if ($total <= 0) {
+            $total = $this->parseFacturaTotal((string) ($row->xml ?? ''));
+        }
+
+        return $total;
     }
 
     private function parseFacturaTotal(string $xml): float

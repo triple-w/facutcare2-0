@@ -242,15 +242,32 @@ class DashboardController extends Controller
         }
 
         $sum = 0.0;
-        foreach ($base->get(['total', 'xml']) as $row) {
-            $total = isset($row->total) ? (float) $row->total : 0.0;
-            if ($total <= 0) {
-                $total = $this->parseTotalFromXml((string) ($row->xml ?? ''));
-            }
+        foreach ($base->get($this->facturasSelectColumns()) as $row) {
+            $total = $this->extractFacturaTotal($row);
             $sum += $total;
         }
 
         return round($sum, 2);
+    }
+
+    private function facturasSelectColumns(): array
+    {
+        $columns = ['xml'];
+        if (Schema::hasColumn('facturas', 'total')) {
+            array_unshift($columns, 'total');
+        }
+
+        return $columns;
+    }
+
+    private function extractFacturaTotal(object $row): float
+    {
+        $total = property_exists($row, 'total') ? (float) ($row->total ?? 0) : 0.0;
+        if ($total <= 0) {
+            $total = $this->parseTotalFromXml((string) ($row->xml ?? ''));
+        }
+
+        return $total;
     }
 
     private function sumComplementosPagos(int $userId, Carbon $start, Carbon $end, bool $canceladas): float
@@ -286,12 +303,9 @@ class DashboardController extends Controller
         $this->applyFacturasDateFilter($base, $start, $end);
 
         $totals = [];
-        foreach ($base->get(['razon_social', 'total', 'xml']) as $row) {
+        foreach ($base->get(array_merge(['razon_social'], $this->facturasSelectColumns())) as $row) {
             $nombre = trim((string) ($row->razon_social ?? ''));
-            $total = isset($row->total) ? (float) $row->total : 0.0;
-            if ($total <= 0) {
-                $total = $this->parseTotalFromXml((string) ($row->xml ?? ''));
-            }
+            $total = $this->extractFacturaTotal($row);
             $totals[$nombre] = ($totals[$nombre] ?? 0.0) + $total;
         }
 
