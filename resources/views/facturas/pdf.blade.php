@@ -11,6 +11,12 @@
     </style>
 </head>
 <body>
+    @if (!empty($logoB64 ?? null))
+        <div style="margin-bottom: 14px;">
+            <img src="data:image/png;base64,{{ $logoB64 }}" alt="Logo" style="max-width: 110px; max-height: 110px;">
+        </div>
+    @endif
+
     <div class="h">Factura</div>
 
     <div class="box">

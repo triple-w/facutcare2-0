@@ -2526,8 +2526,7 @@ private function parseCfdiParties(string $xml): array
         // (Luego lo conectamos a tu tabla/setting real)
         $plantilla = 1;
 
-        // Logo: si todavía no lo manejas en FC2, manda string vacío.
-        $logoB64 = '';
+        $logoB64 = $this->getLogoBase64ForUser($userId) ?? '';
 
         // JSON: lo usamos para datos de impresión (FC1 lo manda base64)
         $tipo = (string)($payload['tipo_comprobante'] ?? 'I');
@@ -2589,14 +2588,26 @@ private function parseCfdiParties(string $xml): array
         }
 
         $meta = $this->parseCfdiBasics($xmlTimbrado);
+        $logoB64 = $this->getLogoBase64ForUser((int) auth()->id());
 
         $pdfBinary = \Barryvdh\DomPDF\Facade\Pdf::loadView('facturas.pdf', [
             'factura' => null,
             'meta' => $meta,
             'xml' => $xmlTimbrado,
+            'logoB64' => $logoB64,
         ])->output();
 
         return base64_encode($pdfBinary);
+    }
+
+    private function getLogoBase64ForUser(int $userId): ?string
+    {
+        $path = public_path("uploads/users_logos/thumbnails/{$userId}.png");
+        if (is_file($path)) {
+            return base64_encode(file_get_contents($path));
+        }
+
+        return null;
     }
 
 

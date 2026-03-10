@@ -8,6 +8,7 @@ use App\Http\Controllers\ProductosController;
 use App\Http\Controllers\FoliosController;
 use App\Http\Controllers\FacturasController;
 use App\Http\Controllers\ComplementosController;
+use App\Http\Controllers\ConfiguracionController;
 
 use App\Http\Controllers\Api\SeriesController;
 use App\Http\Controllers\Api\ProductosApiController;
@@ -101,7 +102,11 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     Route::view('/reportes', 'pages/coming-soon')->name('reportes.index');
 
     // 5) Configuración
-    Route::view('/configuracion', 'pages/coming-soon')->name('configuracion.index');
+    Route::get('/configuracion', [ConfiguracionController::class, 'index'])->name('configuracion.index');
+    Route::post('/configuracion/perfil', [ConfiguracionController::class, 'updatePerfil'])->name('configuracion.perfil');
+    Route::post('/configuracion/csd', [ConfiguracionController::class, 'uploadCsd'])->name('configuracion.csd');
+    Route::delete('/configuracion/logo', [ConfiguracionController::class, 'destroyLogo'])->name('configuracion.logo.destroy');
+    Route::delete('/configuracion/documentos/{id}', [ConfiguracionController::class, 'destroyDocumento'])->name('configuracion.documentos.destroy');
 
     // APIs (usan sesión, no tokens)
     Route::prefix('api')->group(function () {
