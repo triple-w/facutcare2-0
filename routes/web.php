@@ -9,6 +9,7 @@ use App\Http\Controllers\FoliosController;
 use App\Http\Controllers\FacturasController;
 use App\Http\Controllers\ComplementosController;
 use App\Http\Controllers\ConfiguracionController;
+use App\Http\Controllers\ReportesController;
 
 use App\Http\Controllers\Api\SeriesController;
 use App\Http\Controllers\Api\ProductosApiController;
@@ -99,7 +100,9 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
 
     // 4) Reportes
-    Route::view('/reportes', 'pages/coming-soon')->name('reportes.index');
+    Route::get('/reportes', [ReportesController::class, 'index'])->name('reportes.index');
+    Route::get('/reportes/excel', [ReportesController::class, 'exportExcel'])->name('reportes.excel');
+    Route::get('/reportes/pdf', [ReportesController::class, 'exportPdf'])->name('reportes.pdf');
 
     // 5) Configuración
     Route::get('/configuracion', [ConfiguracionController::class, 'index'])->name('configuracion.index');

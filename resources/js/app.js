@@ -1,6 +1,7 @@
 import { Livewire, Alpine } from '../../vendor/livewire/livewire/dist/livewire.esm'
 
 import './bootstrap'
+import './components/factucare-dashboard'
 
 // Alpine plugins (seguros)
 import collapse from '@alpinejs/collapse'

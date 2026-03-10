@@ -17,7 +17,7 @@
             <div class="text-sm font-medium px-1.5 rounded-full {{ $deltaClass }}">{{ $deltaText }}</div>
         </div>
         <div class="text-xs text-gray-500 mt-2">
-            Anio pasado: ${{ number_format((float)$k['previo'], 2) }}
+            Año pasado: ${{ number_format((float)$k['previo'], 2) }}
         </div>
         <div class="text-xs text-gray-500 mt-1">
             @if($topNombre !== '')

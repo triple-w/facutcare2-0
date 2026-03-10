@@ -2,43 +2,42 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use App\Models\DataFeed;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class DashboardController extends Controller
 {
     public function index(Request $request)
     {
-        $userId = auth()->id();
-        $range = (string)$request->query('range', 'month');
+        $userId = (int) auth()->id();
+        $range = (string) $request->query('range', 'month');
 
-        [$start, $end, $startPrev, $endPrev] = $this->resolveRange($range);
+        [$start, $end, $startPrev, $endPrev, $bucket] = $this->resolveRange($range);
 
         $ttl = max(60, Carbon::now()->diffInSeconds(Carbon::now()->endOfDay()));
-        $cacheKey = 'dashboard.kpis.' . $userId . '.' . $range . '.' . $start->format('Ymd') . '.' . $end->format('Ymd');
+        $cacheKey = implode('.', [
+            'dashboard.v2',
+            $userId,
+            $range,
+            $start->format('Ymd'),
+            $end->format('Ymd'),
+        ]);
 
-        $kpis = Cache::remember($cacheKey, $ttl, function () use ($userId, $start, $end, $startPrev, $endPrev) {
-            $ingresosActual = $this->sumFacturasPorTipo($userId, 'I', $start, $end);
-            $ingresosPrev = $this->sumFacturasPorTipo($userId, 'I', $startPrev, $endPrev);
-            $ingresosTop = $this->topClienteFacturas($userId, 'I', $start, $end);
-
-            $egresosActual = $this->sumFacturasPorTipo($userId, 'E', $start, $end);
-            $egresosPrev = $this->sumFacturasPorTipo($userId, 'E', $startPrev, $endPrev);
-            $egresosTop = $this->topClienteFacturas($userId, 'E', $start, $end);
-
-            $complementosActual = $this->sumComplementosPagos($userId, $start, $end);
-            $complementosPrev = $this->sumComplementosPagos($userId, $startPrev, $endPrev);
-            $complementosTop = $this->topClienteComplementos($userId, $start, $end);
+        $dashboard = Cache::remember($cacheKey, $ttl, function () use ($userId, $start, $end, $startPrev, $endPrev, $bucket) {
+            $kpis = [
+                'ingresos' => $this->buildFacturaKpi($userId, 'I', $start, $end, $startPrev, $endPrev, $bucket),
+                'complementos' => $this->buildComplementosKpi($userId, $start, $end, $startPrev, $endPrev, $bucket),
+                'egresos' => $this->buildFacturaKpi($userId, 'E', $start, $end, $startPrev, $endPrev, $bucket),
+            ];
 
             return [
-                'ingresos' => $this->buildKpi($ingresosActual, $ingresosPrev, $ingresosTop),
-                'complementos' => $this->buildKpi($complementosActual, $complementosPrev, $complementosTop),
-                'egresos' => $this->buildKpi($egresosActual, $egresosPrev, $egresosTop),
+                'kpis' => $kpis,
+                'documentCards' => $this->buildDocumentCards($userId, $start, $end),
+                'monthlyChart' => $this->buildMonthlyChart($userId, $start, $end),
             ];
         });
 
@@ -46,42 +45,23 @@ class DashboardController extends Controller
             Log::info('Dashboard debug', [
                 'user_id' => $userId,
                 'range' => $range,
-                'start' => $start->format('Y-m-d H:i:s'),
-                'end' => $end->format('Y-m-d H:i:s'),
-                'start_prev' => $startPrev->format('Y-m-d H:i:s'),
-                'end_prev' => $endPrev->format('Y-m-d H:i:s'),
-                'counts' => [
-                    'ingresos_actual' => $this->countFacturas($userId, 'I', $start, $end),
-                    'ingresos_prev' => $this->countFacturas($userId, 'I', $startPrev, $endPrev),
-                    'egresos_actual' => $this->countFacturas($userId, 'E', $start, $end),
-                    'egresos_prev' => $this->countFacturas($userId, 'E', $startPrev, $endPrev),
-                    'complementos_actual' => $this->countComplementosPagos($userId, $start, $end),
-                    'complementos_prev' => $this->countComplementosPagos($userId, $startPrev, $endPrev),
-                ],
-                'kpis' => $kpis,
+                'dashboard' => $dashboard,
             ]);
         }
 
-        $dataFeed = new DataFeed();
-
-        return view('pages/dashboard/dashboard', compact('dataFeed', 'kpis', 'range'));
+        return view('pages/dashboard/dashboard', [
+            'kpis' => $dashboard['kpis'],
+            'documentCards' => $dashboard['documentCards'],
+            'monthlyChart' => $dashboard['monthlyChart'],
+            'range' => $range,
+        ]);
     }
 
-    /**
-     * Displays the analytics screen
-     *
-     * @return \Illuminate\Contracts\View\Factory|\Illuminate\Contracts\View\View
-     */
     public function analytics()
     {
         return view('pages/dashboard/analytics');
     }
 
-    /**
-     * Displays the fintech screen
-     *
-     * @return \Illuminate\Contracts\View\Factory|\Illuminate\Contracts\View\View
-     */
     public function fintech()
     {
         return view('pages/dashboard/fintech');
@@ -93,96 +73,226 @@ class DashboardController extends Controller
 
         switch ($range) {
             case '3m':
-                $start = $now->copy()->subMonths(3)->startOfDay();
+                $start = $now->copy()->subMonths(2)->startOfMonth();
                 $end = $now->copy()->endOfDay();
+                $bucket = 'month';
                 break;
             case '6m':
-                $start = $now->copy()->subMonths(6)->startOfDay();
+                $start = $now->copy()->subMonths(5)->startOfMonth();
                 $end = $now->copy()->endOfDay();
+                $bucket = 'month';
                 break;
             case '12m':
-                $start = $now->copy()->subYear()->startOfDay();
+                $start = $now->copy()->subMonths(11)->startOfMonth();
                 $end = $now->copy()->endOfDay();
+                $bucket = 'month';
                 break;
             case 'month':
             default:
                 $start = $now->copy()->startOfMonth();
                 $end = $now->copy()->endOfDay();
+                $bucket = 'day';
                 break;
         }
 
         $startPrev = $start->copy()->subYear();
         $endPrev = $end->copy()->subYear();
 
-        return [$start, $end, $startPrev, $endPrev];
+        return [$start, $end, $startPrev, $endPrev, $bucket];
     }
 
-    private function sumFacturasPorTipo(int $userId, string $tipo, Carbon $start, Carbon $end): float
+    private function buildFacturaKpi(int $userId, string $tipo, Carbon $start, Carbon $end, Carbon $startPrev, Carbon $endPrev, string $bucket): array
     {
-        $base = DB::table('facturas')
-            ->where('users_id', $userId)
-            ->whereNotIn('estatus', ['CANCELADA', 'CANCELADO']);
+        $actual = $this->sumFacturasPorTipo($userId, $tipo, $start, $end, false);
+        $previo = $this->sumFacturasPorTipo($userId, $tipo, $startPrev, $endPrev, false);
+        $series = $this->buildSeries(function (Carbon $from, Carbon $to) use ($userId, $tipo) {
+            return $this->sumFacturasPorTipo($userId, $tipo, $from, $to, false);
+        }, $start, $end, $startPrev, $endPrev, $bucket);
 
-        $this->applyFacturasTipoFilter($base, $tipo);
+        return $this->buildKpi($actual, $previo, $this->topClienteFacturas($userId, $tipo, $start, $end), $series);
+    }
+
+    private function buildComplementosKpi(int $userId, Carbon $start, Carbon $end, Carbon $startPrev, Carbon $endPrev, string $bucket): array
+    {
+        $actual = $this->sumComplementosPagos($userId, $start, $end, false);
+        $previo = $this->sumComplementosPagos($userId, $startPrev, $endPrev, false);
+        $series = $this->buildSeries(function (Carbon $from, Carbon $to) use ($userId) {
+            return $this->sumComplementosPagos($userId, $from, $to, false);
+        }, $start, $end, $startPrev, $endPrev, $bucket);
+
+        return $this->buildKpi($actual, $previo, $this->topClienteComplementos($userId, $start, $end), $series);
+    }
+
+    private function buildDocumentCards(int $userId, Carbon $start, Carbon $end): array
+    {
+        $facturas = [
+            'title' => 'Facturas',
+            'count' => $this->countFacturas($userId, 'I', $start, $end, false),
+            'amount' => $this->sumFacturasPorTipo($userId, 'I', $start, $end, false),
+            'tone' => 'violet',
+        ];
+
+        $complementos = [
+            'title' => 'Complementos',
+            'count' => $this->countComplementos($userId, $start, $end, false),
+            'amount' => $this->sumComplementosPagos($userId, $start, $end, false),
+            'tone' => 'sky',
+        ];
+
+        $notas = [
+            'title' => 'Notas de crédito',
+            'count' => $this->countFacturas($userId, 'E', $start, $end, false),
+            'amount' => $this->sumFacturasPorTipo($userId, 'E', $start, $end, false),
+            'tone' => 'amber',
+        ];
+
+        $canceladasFacturas = $this->countFacturas($userId, null, $start, $end, true);
+        $canceladasComplementos = $this->countComplementos($userId, $start, $end, true);
+
+        $canceladas = [
+            'title' => 'Canceladas',
+            'count' => $canceladasFacturas + $canceladasComplementos,
+            'amount' => $this->sumFacturasPorTipo($userId, null, $start, $end, true) + $this->sumComplementosPagos($userId, $start, $end, true),
+            'tone' => 'red',
+        ];
+
+        return [$facturas, $complementos, $notas, $canceladas];
+    }
+
+    private function buildMonthlyChart(int $userId, Carbon $start, Carbon $end): array
+    {
+        $labels = [];
+        $facturas = [];
+        $complementos = [];
+        $notas = [];
+
+        $cursor = $start->copy()->startOfMonth();
+        $last = $end->copy()->startOfMonth();
+
+        while ($cursor <= $last) {
+            $bucketStart = $cursor->copy()->startOfMonth();
+            $bucketEnd = $cursor->copy()->endOfMonth();
+            if ($bucketEnd->greaterThan($end)) {
+                $bucketEnd = $end->copy();
+            }
+
+            $labels[] = $bucketStart->locale('es')->translatedFormat('M y');
+            $facturas[] = $this->sumFacturasPorTipo($userId, 'I', $bucketStart, $bucketEnd, false);
+            $complementos[] = $this->sumComplementosPagos($userId, $bucketStart, $bucketEnd, false);
+            $notas[] = $this->sumFacturasPorTipo($userId, 'E', $bucketStart, $bucketEnd, false);
+
+            $cursor->addMonth();
+        }
+
+        return [
+            'labels' => $labels,
+            'facturas' => $facturas,
+            'complementos' => $complementos,
+            'notas_credito' => $notas,
+        ];
+    }
+
+    private function buildSeries(callable $resolver, Carbon $start, Carbon $end, Carbon $startPrev, Carbon $endPrev, string $bucket): array
+    {
+        $labels = [];
+        $actual = [];
+        $previo = [];
+
+        if ($bucket === 'day') {
+            $current = $start->copy()->startOfDay();
+            $currentPrev = $startPrev->copy()->startOfDay();
+
+            while ($current <= $end) {
+                $labels[] = $current->format('d M');
+                $actual[] = $resolver($current->copy()->startOfDay(), $current->copy()->endOfDay());
+                $previo[] = $resolver($currentPrev->copy()->startOfDay(), $currentPrev->copy()->endOfDay());
+                $current->addDay();
+                $currentPrev->addDay();
+            }
+        } else {
+            $current = $start->copy()->startOfMonth();
+            $currentPrev = $startPrev->copy()->startOfMonth();
+
+            while ($current <= $end) {
+                $labels[] = $current->locale('es')->translatedFormat('M y');
+                $actualEnd = $current->copy()->endOfMonth()->min($end);
+                $prevEnd = $currentPrev->copy()->endOfMonth()->min($endPrev);
+                $actual[] = $resolver($current->copy()->startOfMonth(), $actualEnd);
+                $previo[] = $resolver($currentPrev->copy()->startOfMonth(), $prevEnd);
+                $current->addMonth();
+                $currentPrev->addMonth();
+            }
+        }
+
+        return [
+            'labels' => $labels,
+            'actual' => $actual,
+            'previo' => $previo,
+        ];
+    }
+
+    private function sumFacturasPorTipo(int $userId, ?string $tipo, Carbon $start, Carbon $end, bool $canceladas): float
+    {
+        $base = DB::table('facturas')->where('users_id', $userId);
+        $this->applyFacturasStatusFilter($base, $canceladas);
         $this->applyFacturasDateFilter($base, $start, $end);
 
-        if (Schema::hasColumn('facturas', 'total')) {
-            $sum = $base->sum('total');
-            return round((float)$sum, 2);
+        if ($tipo !== null) {
+            $this->applyFacturasTipoFilter($base, $tipo);
         }
 
         $sum = 0.0;
-        foreach ($base->get(['xml']) as $row) {
-            $sum += $this->parseTotalFromXml((string)($row->xml ?? ''));
+        foreach ($base->get(['total', 'xml']) as $row) {
+            $total = isset($row->total) ? (float) $row->total : 0.0;
+            if ($total <= 0) {
+                $total = $this->parseTotalFromXml((string) ($row->xml ?? ''));
+            }
+            $sum += $total;
         }
 
         return round($sum, 2);
     }
 
-    private function sumComplementosPagos(int $userId, Carbon $start, Carbon $end): float
+    private function sumComplementosPagos(int $userId, Carbon $start, Carbon $end, bool $canceladas): float
     {
-        $sum = DB::table('complementos_pagos as cp')
-            ->join('complementos as c', 'c.id', '=', 'cp.users_complementos_id')
-            ->where('c.users_id', $userId)
-            ->whereNotIn(DB::raw('UPPER(c.estatus)'), ['CANCELADA', 'CANCELADO'])
-            ->whereBetween('cp.fecha_pago', [
-                $start->format('Y-m-d H:i:s'),
-                $end->format('Y-m-d H:i:s'),
-            ])
-            ->sum('cp.monto_pago');
+        $complementos = DB::table('complementos as c')
+            ->where('c.users_id', $userId);
 
-        return round((float)$sum, 2);
+        $this->applyComplementosStatusFilter($complementos, $canceladas);
+        $this->applyComplementosDateFilter($complementos, $start, $end);
+
+        $sum = 0.0;
+        foreach ($complementos->get(['c.id', 'c.xml']) as $row) {
+            $cpSum = 0.0;
+            if (Schema::hasTable('complementos_pagos')) {
+                $cpSum = (float) DB::table('complementos_pagos')
+                    ->where('users_complementos_id', $row->id)
+                    ->sum('monto_pago');
+            }
+
+            $sum += $cpSum > 0 ? $cpSum : $this->parseComplementoTotalFromXml((string) ($row->xml ?? ''));
+        }
+
+        return round($sum, 2);
     }
 
     private function topClienteFacturas(int $userId, string $tipo, Carbon $start, Carbon $end): array
     {
         $base = DB::table('facturas')
-            ->where('users_id', $userId)
-            ->whereNotIn('estatus', ['CANCELADA', 'CANCELADO']);
+            ->where('users_id', $userId);
 
+        $this->applyFacturasStatusFilter($base, false);
         $this->applyFacturasTipoFilter($base, $tipo);
         $this->applyFacturasDateFilter($base, $start, $end);
 
-        if (Schema::hasColumn('facturas', 'total')) {
-            $row = $base
-                ->select([
-                    DB::raw('COALESCE(razon_social, "") as nombre'),
-                    DB::raw('SUM(total) as total'),
-                ])
-                ->groupBy('nombre')
-                ->orderByDesc('total')
-                ->first();
-
-            return [
-                'nombre' => (string)($row->nombre ?? ''),
-                'total' => round((float)($row->total ?? 0), 2),
-            ];
-        }
-
         $totals = [];
-        foreach ($base->get(['razon_social', 'xml']) as $row) {
-            $nombre = (string)($row->razon_social ?? '');
-            $totals[$nombre] = ($totals[$nombre] ?? 0) + $this->parseTotalFromXml((string)($row->xml ?? ''));
+        foreach ($base->get(['razon_social', 'total', 'xml']) as $row) {
+            $nombre = trim((string) ($row->razon_social ?? ''));
+            $total = isset($row->total) ? (float) $row->total : 0.0;
+            if ($total <= 0) {
+                $total = $this->parseTotalFromXml((string) ($row->xml ?? ''));
+            }
+            $totals[$nombre] = ($totals[$nombre] ?? 0.0) + $total;
         }
 
         if (empty($totals)) {
@@ -190,39 +300,51 @@ class DashboardController extends Controller
         }
 
         arsort($totals);
-        $topNombre = (string)array_key_first($totals);
+        $topNombre = (string) array_key_first($totals);
 
         return [
             'nombre' => $topNombre,
-            'total' => round((float)$totals[$topNombre], 2),
+            'total' => round((float) $totals[$topNombre], 2),
         ];
     }
 
     private function topClienteComplementos(int $userId, Carbon $start, Carbon $end): array
     {
-        $row = DB::table('complementos_pagos as cp')
-            ->join('complementos as c', 'c.id', '=', 'cp.users_complementos_id')
-            ->select([
-                DB::raw('COALESCE(c.razon_social, "") as nombre'),
-                DB::raw('SUM(cp.monto_pago) as total'),
-            ])
-            ->where('c.users_id', $userId)
-            ->whereNotIn(DB::raw('UPPER(c.estatus)'), ['CANCELADA', 'CANCELADO'])
-            ->whereBetween('cp.fecha_pago', [
-                $start->format('Y-m-d H:i:s'),
-                $end->format('Y-m-d H:i:s'),
-            ])
-            ->groupBy('nombre')
-            ->orderByDesc('total')
-            ->first();
+        $base = DB::table('complementos as c')
+            ->where('c.users_id', $userId);
+
+        $this->applyComplementosStatusFilter($base, false);
+        $this->applyComplementosDateFilter($base, $start, $end);
+
+        $totals = [];
+        foreach ($base->get(['c.id', 'c.razon_social', 'c.xml']) as $row) {
+            $nombre = trim((string) ($row->razon_social ?? ''));
+            $total = 0.0;
+            if (Schema::hasTable('complementos_pagos')) {
+                $total = (float) DB::table('complementos_pagos')
+                    ->where('users_complementos_id', $row->id)
+                    ->sum('monto_pago');
+            }
+            if ($total <= 0) {
+                $total = $this->parseComplementoTotalFromXml((string) ($row->xml ?? ''));
+            }
+            $totals[$nombre] = ($totals[$nombre] ?? 0.0) + $total;
+        }
+
+        if (empty($totals)) {
+            return ['nombre' => '', 'total' => 0.0];
+        }
+
+        arsort($totals);
+        $topNombre = (string) array_key_first($totals);
 
         return [
-            'nombre' => (string)($row->nombre ?? ''),
-            'total' => round((float)($row->total ?? 0), 2),
+            'nombre' => $topNombre,
+            'total' => round((float) $totals[$topNombre], 2),
         ];
     }
 
-    private function buildKpi(float $actual, float $previo, array $topCliente): array
+    private function buildKpi(float $actual, float $previo, array $topCliente, array $series): array
     {
         $deltaPct = null;
         if ($previo > 0) {
@@ -236,13 +358,23 @@ class DashboardController extends Controller
             'previo' => $previo,
             'delta_pct' => $deltaPct,
             'top_cliente' => $topCliente,
+            'series' => $series,
         ];
     }
 
     private function parseTotalFromXml(string $xmlString): float
     {
         $xmlString = trim($xmlString);
-        if ($xmlString === '') return 0.0;
+        if ($xmlString === '') {
+            return 0.0;
+        }
+
+        if (strpos($xmlString, '<') === false) {
+            $decoded = base64_decode($xmlString, true);
+            if ($decoded !== false && strpos($decoded, '<') !== false) {
+                $xmlString = $decoded;
+            }
+        }
 
         libxml_use_internal_errors(true);
 
@@ -261,27 +393,91 @@ class DashboardController extends Controller
         }
 
         $totalRaw = $comp->getAttribute('Total') ?: $comp->getAttribute('total');
-        $totalRaw = str_replace([',', ' '], '', (string)$totalRaw);
+        return (float) str_replace([',', ' '], '', (string) $totalRaw);
+    }
 
-        return (float)$totalRaw;
+    private function parseComplementoTotalFromXml(string $xmlString): float
+    {
+        $xmlString = trim($xmlString);
+        if ($xmlString === '') {
+            return 0.0;
+        }
+
+        if (strpos($xmlString, '<') === false) {
+            $decoded = base64_decode($xmlString, true);
+            if ($decoded !== false && strpos($decoded, '<') !== false) {
+                $xmlString = $decoded;
+            }
+        }
+
+        libxml_use_internal_errors(true);
+
+        $dom = new \DOMDocument();
+        if (!$dom->loadXML($xmlString, LIBXML_NONET)) {
+            return 0.0;
+        }
+
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('pago20', 'http://www.sat.gob.mx/Pagos20');
+
+        $tot = $xp->query('//pago20:Totales')->item(0);
+        if (!$tot instanceof \DOMElement) {
+            return 0.0;
+        }
+
+        $raw = (string) $tot->getAttribute('MontoTotalPagos');
+        return (float) str_replace([',', ' '], '', $raw);
     }
 
     private function applyFacturasDateFilter($query, Carbon $start, Carbon $end): void
     {
-        $startStr = $start->format('Y-m-d H:i:s');
-        $endStr = $end->format('Y-m-d H:i:s');
-
         $cols = [];
-        if (Schema::hasColumn('facturas', 'fecha_factura')) $cols[] = 'fecha_factura';
-        if (Schema::hasColumn('facturas', 'fecha')) $cols[] = 'fecha';
-        if (Schema::hasColumn('facturas', 'created_at')) $cols[] = 'created_at';
+        if (Schema::hasColumn('facturas', 'fecha_factura')) {
+            $cols[] = 'fecha_factura';
+        }
+        if (Schema::hasColumn('facturas', 'fecha')) {
+            $cols[] = 'fecha';
+        }
+        if (Schema::hasColumn('facturas', 'created_at')) {
+            $cols[] = 'created_at';
+        }
 
         if (empty($cols)) {
             return;
         }
 
         $coalesce = 'COALESCE(' . implode(', ', $cols) . ')';
-        $query->whereBetween(DB::raw($coalesce), [$startStr, $endStr]);
+        $query->whereBetween(DB::raw($coalesce), [
+            $start->format('Y-m-d H:i:s'),
+            $end->format('Y-m-d H:i:s'),
+        ]);
+    }
+
+    private function applyComplementosDateFilter($query, Carbon $start, Carbon $end): void
+    {
+        $cols = [];
+        if (Schema::hasColumn('complementos', 'fecha_pago')) {
+            $cols[] = 'c.fecha_pago';
+        }
+        if (Schema::hasColumn('complementos', 'fecha_documento')) {
+            $cols[] = 'c.fecha_documento';
+        }
+        if (Schema::hasColumn('complementos', 'fecha')) {
+            $cols[] = 'c.fecha';
+        }
+        if (Schema::hasColumn('complementos', 'created_at')) {
+            $cols[] = 'c.created_at';
+        }
+
+        if (empty($cols)) {
+            return;
+        }
+
+        $coalesce = 'COALESCE(' . implode(', ', $cols) . ')';
+        $query->whereBetween(DB::raw($coalesce), [
+            $start->format('Y-m-d H:i:s'),
+            $end->format('Y-m-d H:i:s'),
+        ]);
     }
 
     private function applyFacturasTipoFilter($query, string $tipo): void
@@ -296,32 +492,50 @@ class DashboardController extends Controller
             $values[] = 'EGRESOS';
         }
 
-        $query->whereRaw('UPPER(tipo_comprobante) IN ('.implode(',', array_fill(0, count($values), '?')).')', $values);
+        $query->whereRaw('UPPER(TRIM(COALESCE(tipo_comprobante, ""))) IN (' . implode(',', array_fill(0, count($values), '?')) . ')', $values);
     }
 
-    private function countFacturas(int $userId, string $tipo, Carbon $start, Carbon $end): int
+    private function applyFacturasStatusFilter($query, bool $canceladas): void
     {
-        $q = DB::table('facturas')
-            ->where('users_id', $userId)
-            ->whereNotIn('estatus', ['CANCELADA', 'CANCELADO']);
+        $sql = 'UPPER(TRIM(COALESCE(estatus, "")))';
+        if ($canceladas) {
+            $query->whereRaw($sql . ' IN (?, ?)', ['CANCELADA', 'CANCELADO']);
+            return;
+        }
 
-        $this->applyFacturasTipoFilter($q, $tipo);
+        $query->whereRaw($sql . ' NOT IN (?, ?)', ['CANCELADA', 'CANCELADO']);
+    }
+
+    private function applyComplementosStatusFilter($query, bool $canceladas): void
+    {
+        $sql = 'UPPER(TRIM(COALESCE(c.estatus, "")))';
+        if ($canceladas) {
+            $query->whereRaw($sql . ' IN (?, ?)', ['CANCELADA', 'CANCELADO']);
+            return;
+        }
+
+        $query->whereRaw($sql . ' NOT IN (?, ?)', ['CANCELADA', 'CANCELADO']);
+    }
+
+    private function countFacturas(int $userId, ?string $tipo, Carbon $start, Carbon $end, bool $canceladas): int
+    {
+        $q = DB::table('facturas')->where('users_id', $userId);
+        $this->applyFacturasStatusFilter($q, $canceladas);
         $this->applyFacturasDateFilter($q, $start, $end);
 
-        return (int)$q->count();
+        if ($tipo !== null) {
+            $this->applyFacturasTipoFilter($q, $tipo);
+        }
+
+        return (int) $q->count();
     }
 
-    private function countComplementosPagos(int $userId, Carbon $start, Carbon $end): int
+    private function countComplementos(int $userId, Carbon $start, Carbon $end, bool $canceladas): int
     {
-        $q = DB::table('complementos_pagos as cp')
-            ->join('complementos as c', 'c.id', '=', 'cp.users_complementos_id')
-            ->where('c.users_id', $userId)
-            ->whereNotIn('c.estatus', ['CANCELADA', 'CANCELADO'])
-            ->whereBetween('cp.fecha_pago', [
-                $start->format('Y-m-d H:i:s'),
-                $end->format('Y-m-d H:i:s'),
-            ]);
+        $q = DB::table('complementos as c')->where('c.users_id', $userId);
+        $this->applyComplementosStatusFilter($q, $canceladas);
+        $this->applyComplementosDateFilter($q, $start, $end);
 
-        return (int)$q->count();
+        return (int) $q->count();
     }
 }

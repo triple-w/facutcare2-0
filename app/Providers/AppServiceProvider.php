@@ -2,7 +2,9 @@
 
 namespace App\Providers;
 
+use App\Support\CsdStatus;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\View;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -19,6 +21,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        View::composer('components.app.header', function ($view) {
+            $view->with('csdHealth', CsdStatus::forUser(auth()->id()));
+        });
     }
 }

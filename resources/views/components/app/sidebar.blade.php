@@ -87,7 +87,7 @@
                     </li>
 
                     {{-- 2 Catálogos --}}
-                    <li class="pl-4 pr-3 py-2 rounded-lg mb-1 last:mb-0 bg-linear-to-r
+                    <li class="px-3 py-2 rounded-lg mb-1 last:mb-0 bg-linear-to-r
                         @if($seg1 === 'catalogos'){{ 'from-violet-500/[0.12] dark:from-violet-500/[0.24] to-violet-500/[0.04]' }}@endif"
                         x-data="{ open: {{ $seg1 === 'catalogos' ? 1 : 0 }} }">
 
@@ -152,7 +152,7 @@
                     </li>
 
                     {{-- 3) Facturas / Documentos --}}
-                    <li class="pl-4 pr-3 py-2 rounded-lg mb-1 last:mb-0 bg-linear-to-r
+                    <li class="px-3 py-2 rounded-lg mb-1 last:mb-0 bg-linear-to-r
                         @if($seg1 === 'documentos'){{ 'from-violet-500/[0.12] dark:from-violet-500/[0.24] to-violet-500/[0.04]' }}@endif"
                         x-data="{ open: {{ $seg1 === 'documentos' ? 1 : 0 }} }">
 
@@ -232,7 +232,7 @@
                     </li>
 
                     {{-- 5) Configuración --}}
-                    <li class="pl-4 pr-3 py-2 rounded-lg mb-1 last:mb-0 bg-linear-to-r
+                    <li class="px-3 py-2 rounded-lg mb-1 last:mb-0 bg-linear-to-r
                         @if(request()->routeIs('configuracion.*')){{ 'from-violet-500/[0.12] dark:from-violet-500/[0.24] to-violet-500/[0.04]' }}@endif"
                         x-data="{ open: {{ request()->routeIs('configuracion.*') ? 1 : 0 }} }">
 

@@ -31,6 +31,21 @@
                     </span>
                 </div>
 
+                @php
+                    $csdTone = $csdHealth['tone'] ?? 'red';
+                    $csdClasses = match ($csdTone) {
+                        'green' => 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                        'yellow' => 'border-amber-200 bg-amber-50 text-amber-700',
+                        default => 'border-red-200 bg-red-50 text-red-700',
+                    };
+                @endphp
+                <div class="inline-flex items-center rounded-lg border px-3 py-1.5 {{ $csdClasses }}">
+                    <span class="text-xs mr-2">Sellos</span>
+                    <span class="text-sm font-semibold">
+                        {{ $csdHealth['text'] ?? 'Sin sellos' }}
+                    </span>
+                </div>
+
                 <!-- User button -->
                 <x-dropdown-profile align="right" />
 
