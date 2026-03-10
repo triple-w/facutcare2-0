@@ -36,7 +36,13 @@
         </div>
         <ul>
             <li>
-                <a class="font-medium text-sm text-violet-500 hover:text-violet-600 dark:hover:text-violet-400 flex items-center py-1 px-3" href="{{ route('configuracion.index') }}" @click="open = false" @focus="open = true" @focusout="open = false">Settings</a>
+                <a class="font-medium text-sm text-violet-500 hover:text-violet-600 dark:hover:text-violet-400 flex items-center py-1 px-3" href="{{ route('configuracion.index') }}#cuenta" @click="open = false" @focus="open = true" @focusout="open = false">Configuración de cuenta</a>
+            </li>
+            <li>
+                <a class="font-medium text-sm text-violet-500 hover:text-violet-600 dark:hover:text-violet-400 flex items-center py-1 px-3" href="{{ route('configuracion.index') }}#rfc" @click="open = false" @focus="open = true" @focusout="open = false">Información de RFC</a>
+            </li>
+            <li>
+                <a class="font-medium text-sm text-violet-500 hover:text-violet-600 dark:hover:text-violet-400 flex items-center py-1 px-3" href="{{ route('configuracion.index') }}#sellos" @click="open = false" @focus="open = true" @focusout="open = false">Sellos digitales</a>
             </li>
             <li>
                 <form method="POST" action="{{ route('logout') }}" x-data>

@@ -26,8 +26,38 @@
                 </div>
             @endif
 
+            <div id="cuenta" class="bg-white shadow-sm rounded-lg p-6 scroll-mt-24">
+                <div class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <h3 class="text-base font-semibold text-gray-900">Configuración de cuenta</h3>
+                        <p class="mt-1 text-sm text-gray-500">Accesos rápidos para el perfil fiscal, el logo y los sellos digitales del usuario.</p>
+
+                        <div class="mt-4 flex flex-wrap gap-2">
+                            <a href="#rfc" class="inline-flex items-center rounded-md bg-gray-900 px-3 py-2 text-sm text-white">Información de RFC</a>
+                            <a href="#sellos" class="inline-flex items-center rounded-md bg-violet-600 px-3 py-2 text-sm text-white">Sellos digitales</a>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-4">
+                        @if ($logoUrl)
+                            <img src="{{ $logoUrl }}" alt="Logo actual" class="h-20 w-20 rounded-lg object-cover ring-1 ring-gray-200">
+                        @else
+                            <div class="flex h-20 w-20 items-center justify-center rounded-lg bg-gray-100 text-xs text-gray-500 ring-1 ring-gray-200">
+                                Sin logo
+                            </div>
+                        @endif
+
+                        <div class="text-sm text-gray-600">
+                            <div><span class="font-medium text-gray-900">Usuario:</span> {{ auth()->user()->username ?? auth()->user()->name }}</div>
+                            <div><span class="font-medium text-gray-900">RFC activo:</span> {{ $perfil['rfc'] ?: '—' }}</div>
+                            <div><span class="font-medium text-gray-900">CSD:</span> {{ !empty(($documentos['ARCHIVO_CERTIFICADO'] ?? null)?->validado) && !empty(($documentos['ARCHIVO_LLAVE'] ?? null)?->validado) ? 'Validado' : 'Pendiente' }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div class="xl:col-span-2 bg-white shadow-sm rounded-lg p-6">
+                <div id="rfc" class="xl:col-span-2 bg-white shadow-sm rounded-lg p-6 scroll-mt-24">
                     <h3 class="text-base font-semibold text-gray-900">Información del emisor</h3>
                     <p class="mt-1 text-sm text-gray-500">Estos datos alimentan `users_perfil` y `users_info_factura`, que hoy ya usa el timbrado.</p>
 
@@ -145,7 +175,7 @@
                 </div>
 
                 <div class="space-y-6">
-                    <div class="bg-white shadow-sm rounded-lg p-6">
+                    <div id="sellos" class="bg-white shadow-sm rounded-lg p-6 scroll-mt-24">
                         <h3 class="text-base font-semibold text-gray-900">Sellos digitales</h3>
                         <p class="mt-1 text-sm text-gray-500">Valida el `.cer` y el `.key`, los guarda en servidor y genera sus `.pem`.</p>
 

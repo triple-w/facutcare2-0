@@ -232,21 +232,58 @@
                     </li>
 
                     {{-- 5) Configuración --}}
-                    <li class="mb-1 last:mb-0">
-                        <a class="block text-gray-800 dark:text-gray-100 truncate transition hover:text-gray-900 dark:hover:text-white
-                            @if(request()->routeIs('configuracion.*')){{ 'text-violet-500!' }}@endif"
-                            href="{{ route('configuracion.index') }}">
-                            <div class="flex items-center">
-                                {{-- Icon: configuración --}}
-                                <svg class="shrink-0 fill-current @if(request()->routeIs('configuracion.*')){{ 'text-violet-500' }}@else{{ 'text-gray-400 dark:text-gray-500' }}@endif"
-                                    xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-                                    <path d="M9.667 0 10 2.2l1.4.6 1.933-1.067 1.333 2.31-1.733 1.3.133 1.6 1.6 1.1-1.333 2.31-2-.9-1.4.6L9.667 16H7l-.333-2.2-1.4-.6-2 .9L1.933 11.8l1.6-1.1.133-1.6-1.733-1.3L3.267 2.49 5.2 3.556l1.4-.6L7 0h2.667ZM8.333 5.2A2.8 2.8 0 1 0 8.333 10.8 2.8 2.8 0 0 0 8.333 5.2Z"/>
-                                </svg>
-                                <span class="text-sm font-medium ml-4 lg:opacity-0 lg:sidebar-expanded:opacity-100 2xl:opacity-100 duration-200">
-                                    Configuración
-                                </span>
+                    <li class="pl-4 pr-3 py-2 rounded-lg mb-1 last:mb-0 bg-linear-to-r
+                        @if(request()->routeIs('configuracion.*')){{ 'from-violet-500/[0.12] dark:from-violet-500/[0.24] to-violet-500/[0.04]' }}@endif"
+                        x-data="{ open: {{ request()->routeIs('configuracion.*') ? 1 : 0 }} }">
+
+                        <a class="block text-gray-800 dark:text-gray-100 truncate transition
+                            @if(!request()->routeIs('configuracion.*')){{ 'hover:text-gray-900 dark:hover:text-white' }}@endif"
+                            href="#0" @click.prevent="open = !open; sidebarExpanded = true">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <svg class="shrink-0 fill-current @if(request()->routeIs('configuracion.*')){{ 'text-violet-500' }}@else{{ 'text-gray-400 dark:text-gray-500' }}@endif"
+                                        xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+                                        <path d="M9.667 0 10 2.2l1.4.6 1.933-1.067 1.333 2.31-1.733 1.3.133 1.6 1.6 1.1-1.333 2.31-2-.9-1.4.6L9.667 16H7l-.333-2.2-1.4-.6-2 .9L1.933 11.8l1.6-1.1.133-1.6-1.733-1.3L3.267 2.49 5.2 3.556l1.4-.6L7 0h2.667ZM8.333 5.2A2.8 2.8 0 1 0 8.333 10.8 2.8 2.8 0 0 0 8.333 5.2Z"/>
+                                    </svg>
+                                    <span class="text-sm font-medium ml-4 lg:opacity-0 lg:sidebar-expanded:opacity-100 2xl:opacity-100 duration-200">
+                                        Configuración
+                                    </span>
+                                </div>
+
+                                <div class="flex shrink-0 ml-2 lg:opacity-0 lg:sidebar-expanded:opacity-100 2xl:opacity-100 duration-200">
+                                    <svg class="w-3 h-3 shrink-0 ml-1 fill-current text-gray-400 dark:text-gray-500"
+                                        :class="open ? 'rotate-180' : 'rotate-0'" viewBox="0 0 12 12">
+                                        <path d="M5.9 11.4L.5 6l1.4-1.4 4 4 4-4L11.3 6z" />
+                                    </svg>
+                                </div>
                             </div>
                         </a>
+
+                        <div class="lg:hidden lg:sidebar-expanded:block 2xl:block">
+                            <ul class="pl-8 mt-1 @if(!request()->routeIs('configuracion.*')){{ 'hidden' }}@endif" :class="open ? 'block!' : 'hidden'">
+                                <li class="mb-1 last:mb-0">
+                                    <a class="block text-gray-500/90 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition truncate
+                                        @if(request()->routeIs('configuracion.*')){{ 'text-violet-500!' }}@endif"
+                                        href="{{ route('configuracion.index') }}#cuenta">
+                                        <span class="text-sm font-medium lg:opacity-0 lg:sidebar-expanded:opacity-100 2xl:opacity-100 duration-200">Configuración de cuenta</span>
+                                    </a>
+                                </li>
+                                <li class="mb-1 last:mb-0">
+                                    <a class="block text-gray-500/90 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition truncate
+                                        @if(request()->routeIs('configuracion.*')){{ 'text-violet-500!' }}@endif"
+                                        href="{{ route('configuracion.index') }}#rfc">
+                                        <span class="text-sm font-medium lg:opacity-0 lg:sidebar-expanded:opacity-100 2xl:opacity-100 duration-200">Información de RFC</span>
+                                    </a>
+                                </li>
+                                <li class="mb-1 last:mb-0">
+                                    <a class="block text-gray-500/90 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition truncate
+                                        @if(request()->routeIs('configuracion.*')){{ 'text-violet-500!' }}@endif"
+                                        href="{{ route('configuracion.index') }}#sellos">
+                                        <span class="text-sm font-medium lg:opacity-0 lg:sidebar-expanded:opacity-100 2xl:opacity-100 duration-200">Sellos digitales</span>
+                                    </a>
+                                </li>
+                            </ul>
+                        </div>
                     </li>
 
                 </ul>
