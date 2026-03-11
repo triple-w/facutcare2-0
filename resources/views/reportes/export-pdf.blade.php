@@ -13,8 +13,9 @@
     </style>
 </head>
 <body>
-    <h1>Reporte de {{ str_replace('_', ' ', $filters['tipo'] ?? 'documentos') }}</h1>
+    <h1>Reporte de {{ $filters['tipo_label'] ?? str_replace('_', ' ', $filters['tipo'] ?? 'documentos') }}</h1>
     <p>Rango: {{ $filters['fecha_inicio'] ?? '' }} al {{ $filters['fecha_fin'] ?? '' }}</p>
+    <p>Estatus: {{ $filters['estatus_label'] ?? 'Todos' }} | Cliente: {{ $filters['cliente_label'] ?? 'Todos' }}</p>
 
     <table>
         <thead>

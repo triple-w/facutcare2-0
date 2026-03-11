@@ -1,4 +1,13 @@
 <table border="1">
+    <tr>
+        <td colspan="8">Tipo: {{ $filters['tipo_label'] ?? str_replace('_', ' ', $filters['tipo'] ?? 'documentos') }}</td>
+    </tr>
+    <tr>
+        <td colspan="8">Fecha: {{ $filters['fecha_inicio'] ?? '' }} al {{ $filters['fecha_fin'] ?? '' }}</td>
+    </tr>
+    <tr>
+        <td colspan="8">Estatus: {{ $filters['estatus_label'] ?? 'Todos' }} | Cliente: {{ $filters['cliente_label'] ?? 'Todos' }}</td>
+    </tr>
     <thead>
         <tr>
             <th>Documento</th>

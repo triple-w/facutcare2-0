@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class ReportesController extends Controller
 {
@@ -21,7 +22,7 @@ class ReportesController extends Controller
     public function exportExcel(Request $request)
     {
         [$filters, $rows] = $this->resolveReport($request);
-        $filename = 'reporte_' . $filters['tipo'] . '_' . now()->format('Ymd_His') . '.xls';
+        $filename = $this->buildFilename($filters, 'xls');
 
         return response()
             ->view('reportes.export-excel', compact('filters', 'rows'))
@@ -32,7 +33,7 @@ class ReportesController extends Controller
     public function exportPdf(Request $request)
     {
         [$filters, $rows] = $this->resolveReport($request);
-        $filename = 'reporte_' . $filters['tipo'] . '_' . now()->format('Ymd_His') . '.pdf';
+        $filename = $this->buildFilename($filters, 'pdf');
 
         $pdf = Pdf::loadView('reportes.export-pdf', compact('filters', 'rows'));
 
@@ -45,15 +46,22 @@ class ReportesController extends Controller
             'tipo' => ['nullable', 'string'],
             'fecha_inicio' => ['nullable', 'date'],
             'fecha_fin' => ['nullable', 'date'],
+            'cliente' => ['nullable', 'string', 'max:255'],
+            'estatus' => ['nullable', 'string'],
         ]);
 
         $filters['tipo'] = $filters['tipo'] ?? 'facturas';
         $filters['fecha_inicio'] = $filters['fecha_inicio'] ?? now()->startOfMonth()->toDateString();
         $filters['fecha_fin'] = $filters['fecha_fin'] ?? now()->toDateString();
+        $filters['cliente'] = trim((string) ($filters['cliente'] ?? ''));
+        $filters['estatus'] = $this->normalizeStatusFilter((string) ($filters['estatus'] ?? 'todos'));
+        $filters['tipo_label'] = $this->tipoLabel($filters['tipo']);
+        $filters['estatus_label'] = $this->estatusLabel($filters['estatus']);
+        $filters['cliente_label'] = $filters['cliente'] !== '' ? $filters['cliente'] : 'Todos';
 
         $rows = $this->buildRows(
             (int) auth()->id(),
-            $filters['tipo'],
+            $filters,
             Carbon::parse($filters['fecha_inicio'])->startOfDay(),
             Carbon::parse($filters['fecha_fin'])->endOfDay()
         );
@@ -61,24 +69,32 @@ class ReportesController extends Controller
         return [$filters, $rows];
     }
 
-    private function buildRows(int $userId, string $tipo, Carbon $from, Carbon $to): Collection
+    private function buildRows(int $userId, array $filters, Carbon $from, Carbon $to): Collection
     {
-        return match ($tipo) {
-            'complementos' => $this->queryComplementos($userId, $from, $to, false),
-            'notas_credito' => $this->queryFacturas($userId, $from, $to, 'E', false),
-            'canceladas' => $this->queryFacturas($userId, $from, $to, null, true)
-                ->merge($this->queryComplementos($userId, $from, $to, true))
+        $tipo = $filters['tipo'];
+        $estatus = $filters['estatus'];
+
+        $rows = match ($tipo) {
+            'complementos' => $this->queryComplementos($userId, $from, $to, $estatus),
+            'notas_credito' => $this->queryFacturas($userId, $from, $to, 'E', $estatus),
+            'canceladas' => $this->queryFacturas($userId, $from, $to, null, 'canceladas')
+                ->merge($this->queryComplementos($userId, $from, $to, 'canceladas'))
                 ->sortByDesc('fecha')
                 ->values(),
-            default => $this->queryFacturas($userId, $from, $to, 'I', false),
+            default => $this->queryFacturas($userId, $from, $to, 'I', $estatus),
         };
+
+        return $rows
+            ->filter(fn ($row) => $this->matchesClientFilter($row, $filters['cliente']))
+            ->filter(fn ($row) => $this->matchesDateFilter($row, $from, $to))
+            ->values();
     }
 
-    private function queryFacturas(int $userId, Carbon $from, Carbon $to, ?string $tipo, bool $canceladas): Collection
+    private function queryFacturas(int $userId, Carbon $from, Carbon $to, ?string $tipo, string $estatus): Collection
     {
         $q = DB::table('facturas')->where('users_id', $userId);
         $this->applyFacturasDateFilter($q, $from, $to);
-        $this->applyFacturasStatusFilter($q, $canceladas);
+        $this->applyFacturasStatusFilter($q, $estatus);
 
         if ($tipo !== null) {
             $this->applyFacturasTipoFilter($q, $tipo);
@@ -92,14 +108,16 @@ class ReportesController extends Controller
                 $row->fecha = $row->fecha_factura ?? $row->fecha ?? $row->created_at ?? null;
                 $row->total_calculado = $this->extractFacturaTotal($row);
                 return $row;
-            });
+            })
+            ->filter(fn ($row) => $this->matchesStatusFilter($row, $estatus))
+            ->values();
     }
 
-    private function queryComplementos(int $userId, Carbon $from, Carbon $to, bool $canceladas): Collection
+    private function queryComplementos(int $userId, Carbon $from, Carbon $to, string $estatus): Collection
     {
         $q = DB::table('complementos as c')->where('c.users_id', $userId);
         $this->applyComplementosDateFilter($q, $from, $to);
-        $this->applyComplementosStatusFilter($q, $canceladas);
+        $this->applyComplementosStatusFilter($q, $estatus);
 
         return $q->orderByDesc('c.id')
             ->get($this->complementosReportColumns())
@@ -117,7 +135,9 @@ class ReportesController extends Controller
                     $row->total_calculado = $this->parseComplementoTotal((string) ($row->xml ?? ''));
                 }
                 return $row;
-            });
+            })
+            ->filter(fn ($row) => $this->matchesStatusFilter($row, $estatus))
+            ->values();
     }
 
     private function applyFacturasDateFilter($query, Carbon $start, Carbon $end): void
@@ -148,22 +168,22 @@ class ReportesController extends Controller
         ]);
     }
 
-    private function applyFacturasStatusFilter($query, bool $canceladas): void
+    private function applyFacturasStatusFilter($query, string $estatus): void
     {
         $sql = 'UPPER(TRIM(COALESCE(estatus, "")))';
-        if ($canceladas) {
+        if ($estatus === 'canceladas') {
             $query->whereRaw($sql . ' IN (?, ?)', ['CANCELADA', 'CANCELADO']);
-        } else {
+        } elseif ($estatus === 'vigentes') {
             $query->whereRaw($sql . ' NOT IN (?, ?)', ['CANCELADA', 'CANCELADO']);
         }
     }
 
-    private function applyComplementosStatusFilter($query, bool $canceladas): void
+    private function applyComplementosStatusFilter($query, string $estatus): void
     {
         $sql = 'UPPER(TRIM(COALESCE(c.estatus, "")))';
-        if ($canceladas) {
+        if ($estatus === 'canceladas') {
             $query->whereRaw($sql . ' IN (?, ?)', ['CANCELADA', 'CANCELADO']);
-        } else {
+        } elseif ($estatus === 'vigentes') {
             $query->whereRaw($sql . ' NOT IN (?, ?)', ['CANCELADA', 'CANCELADO']);
         }
     }
@@ -324,6 +344,82 @@ class ReportesController extends Controller
     {
         $value = trim((string) $value);
         return $value === '' ? null : $value;
+    }
+
+    private function normalizeStatusFilter(string $estatus): string
+    {
+        $estatus = Str::lower(trim($estatus));
+
+        return in_array($estatus, ['todos', 'vigentes', 'canceladas'], true) ? $estatus : 'todos';
+    }
+
+    private function matchesStatusFilter(object $row, string $estatus): bool
+    {
+        if ($estatus === 'todos') {
+            return true;
+        }
+
+        $normalized = Str::upper(trim((string) ($row->estatus ?? '')));
+        $cancelada = in_array($normalized, ['CANCELADA', 'CANCELADO'], true);
+
+        return $estatus === 'canceladas' ? $cancelada : !$cancelada;
+    }
+
+    private function matchesClientFilter(object $row, string $cliente): bool
+    {
+        $cliente = trim($cliente);
+        if ($cliente === '') {
+            return true;
+        }
+
+        $needle = Str::upper(Str::ascii($cliente));
+        $haystack = Str::upper(Str::ascii(trim((string) ($row->razon_social ?? '')) . ' ' . trim((string) ($row->rfc ?? ''))));
+
+        return str_contains($haystack, $needle);
+    }
+
+    private function matchesDateFilter(object $row, Carbon $from, Carbon $to): bool
+    {
+        if (empty($row->fecha)) {
+            return false;
+        }
+
+        try {
+            $fecha = Carbon::parse($row->fecha);
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        return $fecha->betweenIncluded($from, $to);
+    }
+
+    private function tipoLabel(string $tipo): string
+    {
+        return match ($tipo) {
+            'complementos' => 'Complementos',
+            'notas_credito' => 'Notas de crédito',
+            'canceladas' => 'Canceladas',
+            default => 'Facturas',
+        };
+    }
+
+    private function estatusLabel(string $estatus): string
+    {
+        return match ($estatus) {
+            'vigentes' => 'Vigentes',
+            'canceladas' => 'Canceladas',
+            default => 'Todos',
+        };
+    }
+
+    private function buildFilename(array $filters, string $extension): string
+    {
+        $fecha = ($filters['fecha_inicio'] ?? 'sin-fecha') . '_a_' . ($filters['fecha_fin'] ?? 'sin-fecha');
+        $estatus = $filters['estatus'] ?? 'todos';
+        $cliente = $filters['cliente'] !== '' ? Str::slug(Str::limit($filters['cliente'], 40, ''), '-') : 'todos';
+        $tipo = Str::slug($filters['tipo'] ?? 'documentos', '-');
+
+        return 'Reporte-' . $tipo . '-' . $fecha . '-' . $estatus . '-' . $cliente . '.' . $extension;
     }
 
     private function parseFacturaTotal(string $xml): float
