@@ -87,6 +87,7 @@ class ReportesController extends Controller
         return $q->orderByDesc('id')
             ->get($this->facturasReportColumns())
             ->map(function ($row) {
+                $this->hydrateFacturaMetadata($row);
                 $row->documento = strtoupper((string) ($row->tipo_comprobante ?? '')) === 'E' ? 'Nota de crédito' : 'Factura';
                 $row->fecha = $row->fecha_factura ?? $row->fecha ?? $row->created_at ?? null;
                 $row->total_calculado = $this->extractFacturaTotal($row);
@@ -101,8 +102,9 @@ class ReportesController extends Controller
         $this->applyComplementosStatusFilter($q, $canceladas);
 
         return $q->orderByDesc('c.id')
-            ->get(['c.id', 'c.serie', 'c.folio', 'c.uuid', 'c.rfc', 'c.razon_social', 'c.estatus', 'c.fecha_pago', 'c.fecha_documento', 'c.created_at', 'c.xml'])
+            ->get($this->complementosReportColumns())
             ->map(function ($row) {
+                $this->hydrateComplementoMetadata($row);
                 $row->documento = 'Complemento de pago';
                 $row->fecha = $row->fecha_pago ?? $row->fecha_documento ?? $row->created_at ?? null;
                 $row->total_calculado = 0.0;
@@ -183,12 +185,23 @@ class ReportesController extends Controller
 
     private function facturasReportColumns(): array
     {
-        $columns = ['id', 'serie', 'folio', 'uuid', 'rfc', 'razon_social', 'estatus', 'tipo_comprobante', 'fecha', 'fecha_factura', 'created_at', 'xml'];
-        if (Schema::hasColumn('facturas', 'total')) {
-            $columns[] = 'total';
-        }
+        $preferred = [
+            'id',
+            'serie',
+            'folio',
+            'uuid',
+            'rfc',
+            'razon_social',
+            'estatus',
+            'tipo_comprobante',
+            'fecha',
+            'fecha_factura',
+            'created_at',
+            'xml',
+            'total',
+        ];
 
-        return $columns;
+        return array_values(array_filter($preferred, fn ($column) => Schema::hasColumn('facturas', $column)));
     }
 
     private function extractFacturaTotal(object $row): float
@@ -199,6 +212,118 @@ class ReportesController extends Controller
         }
 
         return $total;
+    }
+
+    private function complementosReportColumns(): array
+    {
+        $preferred = [
+            'id' => 'c.id',
+            'serie' => 'c.serie',
+            'folio' => 'c.folio',
+            'uuid' => 'c.uuid',
+            'rfc' => 'c.rfc',
+            'razon_social' => 'c.razon_social',
+            'estatus' => 'c.estatus',
+            'fecha_pago' => 'c.fecha_pago',
+            'fecha_documento' => 'c.fecha_documento',
+            'created_at' => 'c.created_at',
+            'xml' => 'c.xml',
+        ];
+
+        $columns = [];
+        foreach ($preferred as $column => $select) {
+            if (Schema::hasColumn('complementos', $column)) {
+                $columns[] = $select;
+            }
+        }
+
+        return $columns;
+    }
+
+    private function hydrateFacturaMetadata(object $row): void
+    {
+        $xml = $this->normalizeXml((string) ($row->xml ?? ''));
+        if ($xml === '') {
+            return;
+        }
+
+        $dom = new \DOMDocument();
+        if (!$dom->loadXML($xml, LIBXML_NONET)) {
+            return;
+        }
+
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('cfdi3', 'http://www.sat.gob.mx/cfd/3');
+        $xp->registerNamespace('cfdi4', 'http://www.sat.gob.mx/cfd/4');
+
+        $comprobante = $xp->query('//cfdi4:Comprobante | //cfdi3:Comprobante')->item(0);
+        $receptor = $xp->query('//cfdi4:Receptor | //cfdi3:Receptor')->item(0);
+        $timbre = $xp->query('//*[local-name()="TimbreFiscalDigital"]')->item(0);
+
+        if ($comprobante instanceof \DOMElement) {
+            $row->serie = $row->serie ?? $this->emptyToNull($comprobante->getAttribute('Serie') ?: $comprobante->getAttribute('serie'));
+            $row->folio = $row->folio ?? $this->emptyToNull($comprobante->getAttribute('Folio') ?: $comprobante->getAttribute('folio'));
+            $row->tipo_comprobante = $row->tipo_comprobante ?? $this->emptyToNull($comprobante->getAttribute('TipoDeComprobante') ?: $comprobante->getAttribute('tipoDeComprobante'));
+            $row->fecha_factura = $row->fecha_factura ?? $this->emptyToNull($comprobante->getAttribute('Fecha') ?: $comprobante->getAttribute('fecha'));
+        }
+
+        if ($receptor instanceof \DOMElement) {
+            $row->rfc = $row->rfc ?? $this->emptyToNull($receptor->getAttribute('Rfc') ?: $receptor->getAttribute('rfc'));
+            $row->razon_social = $row->razon_social ?? $this->emptyToNull($receptor->getAttribute('Nombre') ?: $receptor->getAttribute('nombre'));
+        }
+
+        if ($timbre instanceof \DOMElement) {
+            $row->uuid = $row->uuid ?? $this->emptyToNull($timbre->getAttribute('UUID') ?: $timbre->getAttribute('Uuid') ?: $timbre->getAttribute('uuid'));
+        }
+    }
+
+    private function hydrateComplementoMetadata(object $row): void
+    {
+        $xml = $this->normalizeXml((string) ($row->xml ?? ''));
+        if ($xml === '') {
+            return;
+        }
+
+        $dom = new \DOMDocument();
+        if (!$dom->loadXML($xml, LIBXML_NONET)) {
+            return;
+        }
+
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('cfdi3', 'http://www.sat.gob.mx/cfd/3');
+        $xp->registerNamespace('cfdi4', 'http://www.sat.gob.mx/cfd/4');
+        $xp->registerNamespace('pago10', 'http://www.sat.gob.mx/Pagos');
+        $xp->registerNamespace('pago20', 'http://www.sat.gob.mx/Pagos20');
+
+        $comprobante = $xp->query('//cfdi4:Comprobante | //cfdi3:Comprobante')->item(0);
+        $receptor = $xp->query('//cfdi4:Receptor | //cfdi3:Receptor')->item(0);
+        $timbre = $xp->query('//*[local-name()="TimbreFiscalDigital"]')->item(0);
+        $pago = $xp->query('//pago20:Pago | //pago10:Pago')->item(0);
+
+        if ($comprobante instanceof \DOMElement) {
+            $row->serie = $row->serie ?? $this->emptyToNull($comprobante->getAttribute('Serie') ?: $comprobante->getAttribute('serie'));
+            $row->folio = $row->folio ?? $this->emptyToNull($comprobante->getAttribute('Folio') ?: $comprobante->getAttribute('folio'));
+            $row->fecha_documento = $row->fecha_documento ?? $this->emptyToNull($comprobante->getAttribute('Fecha') ?: $comprobante->getAttribute('fecha'));
+        }
+
+        if ($receptor instanceof \DOMElement) {
+            $row->rfc = $row->rfc ?? $this->emptyToNull($receptor->getAttribute('Rfc') ?: $receptor->getAttribute('rfc'));
+            $row->razon_social = $row->razon_social ?? $this->emptyToNull($receptor->getAttribute('Nombre') ?: $receptor->getAttribute('nombre'));
+        }
+
+        if ($timbre instanceof \DOMElement) {
+            $row->uuid = $row->uuid ?? $this->emptyToNull($timbre->getAttribute('UUID') ?: $timbre->getAttribute('Uuid') ?: $timbre->getAttribute('uuid'));
+        }
+
+        if ($pago instanceof \DOMElement) {
+            $row->fecha_pago = $row->fecha_pago ?? $this->emptyToNull($pago->getAttribute('FechaPago') ?: $pago->getAttribute('fechaPago'));
+        }
+    }
+
+    private function emptyToNull(?string $value): ?string
+    {
+        $value = trim((string) $value);
+        return $value === '' ? null : $value;
     }
 
     private function parseFacturaTotal(string $xml): float
