@@ -44,10 +44,10 @@
                         <input type="text" name="cliente" value="{{ $filters['cliente'] ?? '' }}" placeholder="RFC o razón social" class="w-full rounded-md border-gray-300">
                     </div>
 
-                    <div class="flex items-end gap-2">
-                        <button class="px-4 py-2 bg-gray-900 text-white rounded-md text-sm">Generar</button>
-                        <a href="{{ route('reportes.excel', ['tipo' => $filters['tipo'] ?? 'facturas', 'fecha_inicio' => $filters['fecha_inicio'] ?? '', 'fecha_fin' => $filters['fecha_fin'] ?? '', 'estatus' => $filters['estatus'] ?? 'todos', 'cliente' => $filters['cliente'] ?? '']) }}" class="px-4 py-2 bg-emerald-600 text-white rounded-md text-sm">Excel</a>
-                        <a href="{{ route('reportes.pdf', ['tipo' => $filters['tipo'] ?? 'facturas', 'fecha_inicio' => $filters['fecha_inicio'] ?? '', 'fecha_fin' => $filters['fecha_fin'] ?? '', 'estatus' => $filters['estatus'] ?? 'todos', 'cliente' => $filters['cliente'] ?? '']) }}" class="px-4 py-2 bg-red-600 text-white rounded-md text-sm">PDF</a>
+                    <div class="flex flex-wrap items-end gap-2 md:col-span-5">
+                        <button class="inline-flex items-center justify-center rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-gray-800">Generar</button>
+                        <a href="{{ route('reportes.excel', ['tipo' => $filters['tipo'] ?? 'facturas', 'fecha_inicio' => $filters['fecha_inicio'] ?? '', 'fecha_fin' => $filters['fecha_fin'] ?? '', 'estatus' => $filters['estatus'] ?? 'todos', 'cliente' => $filters['cliente'] ?? '']) }}" class="inline-flex items-center justify-center rounded-md border border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700">Descargar Excel</a>
+                        <a href="{{ route('reportes.pdf', ['tipo' => $filters['tipo'] ?? 'facturas', 'fecha_inicio' => $filters['fecha_inicio'] ?? '', 'fecha_fin' => $filters['fecha_fin'] ?? '', 'estatus' => $filters['estatus'] ?? 'todos', 'cliente' => $filters['cliente'] ?? '']) }}" class="inline-flex items-center justify-center rounded-md border border-red-700 bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-red-700">Descargar PDF</a>
                     </div>
                 </form>
             </div>

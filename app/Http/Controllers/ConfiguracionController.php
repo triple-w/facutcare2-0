@@ -42,6 +42,7 @@ class ConfiguracionController extends Controller
             'nombre_contacto' => ['nullable', 'string', 'max:150'],
             'regimen_fiscal' => ['required', 'string', 'max:5', Rule::in(array_keys(config('sat.regimenes_fiscales')))],
             'logo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:4096'],
+            'logo_cropped' => ['nullable', 'string'],
         ]);
 
         $userId = (int) auth()->id();
@@ -86,7 +87,9 @@ class ConfiguracionController extends Controller
             ]);
         });
 
-        if ($request->hasFile('logo')) {
+        if (!empty($data['logo_cropped'])) {
+            $this->storeLogoFromBase64($userId, $data['logo_cropped']);
+        } elseif ($request->hasFile('logo')) {
             $this->storeLogo($userId, $request->file('logo'));
         }
 
@@ -350,6 +353,30 @@ class ConfiguracionController extends Controller
 
     private function storeLogo(int $userId, UploadedFile $file): void
     {
+        $binary = file_get_contents($file->getRealPath());
+        if ($binary === false) {
+            throw new \RuntimeException('No pude leer el archivo del logo.');
+        }
+
+        $this->storeLogoBinary($userId, $binary);
+    }
+
+    private function storeLogoFromBase64(int $userId, string $dataUrl): void
+    {
+        if (!preg_match('/^data:image\/[a-zA-Z0-9.+-]+;base64,/', $dataUrl)) {
+            throw new \RuntimeException('El recorte del logo no tiene un formato válido.');
+        }
+
+        $binary = base64_decode(substr($dataUrl, strpos($dataUrl, ',') + 1), true);
+        if ($binary === false) {
+            throw new \RuntimeException('No pude procesar el logo recortado.');
+        }
+
+        $this->storeLogoBinary($userId, $binary);
+    }
+
+    private function storeLogoBinary(int $userId, string $binary): void
+    {
         $baseDir = public_path('uploads/users_logos');
         $thumbDir = public_path('uploads/users_logos/thumbnails');
 
@@ -360,35 +387,28 @@ class ConfiguracionController extends Controller
             mkdir($thumbDir, 0775, true);
         }
 
-        $binary = file_get_contents($file->getRealPath());
-        if ($binary === false) {
-            throw new \RuntimeException('No pude leer el archivo del logo.');
-        }
-
         $source = @imagecreatefromstring($binary);
         if (!$source) {
             throw new \RuntimeException('El logo no es una imagen válida.');
         }
 
+        $size = 320;
         $width = imagesx($source);
         $height = imagesy($source);
         $side = min($width, $height);
         $srcX = (int) floor(($width - $side) / 2);
         $srcY = (int) floor(($height - $side) / 2);
 
-        $size = 320;
-        $thumb = imagecreatetruecolor($size, $size);
-        imagealphablending($thumb, false);
-        imagesavealpha($thumb, true);
-        $transparent = imagecolorallocatealpha($thumb, 0, 0, 0, 127);
-        imagefilledrectangle($thumb, 0, 0, $size, $size, $transparent);
+        $canvas = imagecreatetruecolor($size, $size);
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        imagefilledrectangle($canvas, 0, 0, $size, $size, $white);
+        imagecopyresampled($canvas, $source, 0, 0, $srcX, $srcY, $size, $size, $side, $side);
 
-        imagecopyresampled($thumb, $source, 0, 0, $srcX, $srcY, $size, $size, $side, $side);
+        imagejpeg($canvas, public_path("uploads/users_logos/{$userId}.jpg"), 90);
+        imagepng($canvas, public_path("uploads/users_logos/{$userId}.png"));
+        imagepng($canvas, public_path("uploads/users_logos/thumbnails/{$userId}.png"));
 
-        imagepng($thumb, public_path("uploads/users_logos/{$userId}.png"));
-        imagepng($thumb, public_path("uploads/users_logos/thumbnails/{$userId}.png"));
-
-        imagedestroy($thumb);
+        imagedestroy($canvas);
         imagedestroy($source);
     }
 

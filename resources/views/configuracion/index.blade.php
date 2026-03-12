@@ -149,23 +149,71 @@
 
                         <hr class="my-6">
 
-                        <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-start">
+                        <div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_280px] items-start">
                             <div>
-                                <label class="block text-sm font-medium mb-1">Logo</label>
-                                <input type="file" name="logo" accept=".png,.jpg,.jpeg,.webp" class="block w-full text-sm text-gray-500">
-                                <p class="mt-1 text-xs text-gray-500">Se guarda en `public/uploads/users_logos/thumbnails/{usuario}.png` para que el PAC y los PDFs lo consuman.</p>
-                            </div>
+                                <label class="block text-sm font-medium mb-2">Logo</label>
+                                <div id="logo-cropper" class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4">
+                                    <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" class="sr-only">
+                                    <input id="logo_cropped" type="hidden" name="logo_cropped">
 
-                            @if ($logoUrl)
-                                <div class="rounded-lg border border-gray-200 p-3">
-                                    <img src="{{ $logoUrl }}" alt="Logo actual" class="h-24 w-24 rounded-lg object-cover">
-                                    <form method="POST" action="{{ route('configuracion.logo.destroy') }}" class="mt-3">
-                                        @csrf
-                                        @method('DELETE')
-                                        <button class="text-sm text-red-600 hover:text-red-700">Eliminar logo</button>
-                                    </form>
+                                    <div class="flex flex-wrap items-center gap-3">
+                                        <label for="logo" class="inline-flex cursor-pointer items-center justify-center rounded-md border border-sky-700 bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700">
+                                            Seleccionar logo
+                                        </label>
+                                        <button type="button" id="logo-reset" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
+                                            Restablecer recorte
+                                        </button>
+                                    </div>
+
+                                    <p class="mt-3 text-xs text-gray-600">
+                                        De preferencia sube una imagen chica en formato JPG. El sistema la recorta en cuadrado y la guarda optimizada para facturas.
+                                    </p>
+
+                                    <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                                        <div>
+                                            <div class="rounded-xl border border-gray-200 bg-white p-4">
+                                                <div class="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Recorte</div>
+                                                <div class="mx-auto w-full max-w-[320px]">
+                                                    <div id="logo-crop-stage" class="relative aspect-square overflow-hidden rounded-xl bg-[linear-gradient(45deg,#f3f4f6_25%,transparent_25%),linear-gradient(-45deg,#f3f4f6_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f3f4f6_75%),linear-gradient(-45deg,transparent_75%,#f3f4f6_75%)] bg-[length:20px_20px] bg-[position:0_0,0_10px,10px_-10px,-10px_0px]">
+                                                        <img id="logo-crop-image" src="{{ $logoUrl ?? '' }}" alt="Recorte del logo" class="absolute left-0 top-0 hidden max-w-none select-none" draggable="false">
+                                                        <div id="logo-crop-placeholder" class="flex h-full items-center justify-center text-center text-sm text-gray-400">
+                                                            Elige una imagen para ajustar el recorte
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div class="mt-4">
+                                                <label for="logo-zoom" class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Zoom</label>
+                                                <input id="logo-zoom" type="range" min="1" max="3" step="0.01" value="1" class="w-full">
+                                            </div>
+                                        </div>
+
+                                        <div class="rounded-xl border border-gray-200 bg-white p-4">
+                                            <div class="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Vista previa</div>
+                                            <div class="flex items-center justify-center">
+                                                <div class="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+                                                    <img id="logo-preview" src="{{ $logoUrl ?? '' }}" alt="Vista previa del logo" class="h-36 w-36 rounded-lg object-cover {{ $logoUrl ? '' : 'hidden' }}">
+                                                    <div id="logo-preview-empty" class="flex h-36 w-36 items-center justify-center rounded-lg bg-gray-100 text-center text-xs text-gray-400 {{ $logoUrl ? 'hidden' : '' }}">
+                                                        Aquí verás cómo quedará el logo
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <p class="mt-3 text-xs text-gray-500">
+                                                Tamaño de salida: JPG cuadrado optimizado. También se genera la miniatura PNG que usa el PAC.
+                                            </p>
+
+                                            @if ($logoUrl)
+                                                <form method="POST" action="{{ route('configuracion.logo.destroy') }}" class="mt-4">
+                                                    @csrf
+                                                    @method('DELETE')
+                                                    <button class="inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100">Eliminar logo actual</button>
+                                                </form>
+                                            @endif
+                                        </div>
+                                    </div>
                                 </div>
-                            @endif
+                            </div>
                         </div>
 
                         <div class="mt-6 flex gap-2">
@@ -263,3 +311,171 @@
         </div>
     </div>
 </x-app-layout>
+
+@push('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('logo');
+    const hidden = document.getElementById('logo_cropped');
+    const image = document.getElementById('logo-crop-image');
+    const preview = document.getElementById('logo-preview');
+    const previewEmpty = document.getElementById('logo-preview-empty');
+    const placeholder = document.getElementById('logo-crop-placeholder');
+    const stage = document.getElementById('logo-crop-stage');
+    const zoom = document.getElementById('logo-zoom');
+    const reset = document.getElementById('logo-reset');
+
+    if (!input || !hidden || !image || !preview || !placeholder || !stage || !zoom || !reset) {
+        return;
+    }
+
+    const state = {
+        imgWidth: 0,
+        imgHeight: 0,
+        scale: 1,
+        minScale: 1,
+        offsetX: 0,
+        offsetY: 0,
+        dragging: false,
+        dragX: 0,
+        dragY: 0,
+    };
+
+    function clampOffsets() {
+        const stageSize = stage.clientWidth;
+        const drawWidth = state.imgWidth * state.scale;
+        const drawHeight = state.imgHeight * state.scale;
+        const minX = Math.min(0, stageSize - drawWidth);
+        const minY = Math.min(0, stageSize - drawHeight);
+        const maxX = Math.max(0, stageSize - drawWidth);
+        const maxY = Math.max(0, stageSize - drawHeight);
+        state.offsetX = Math.min(maxX, Math.max(minX, state.offsetX));
+        state.offsetY = Math.min(maxY, Math.max(minY, state.offsetY));
+    }
+
+    function render() {
+        if (!state.imgWidth || !state.imgHeight) {
+            return;
+        }
+
+        clampOffsets();
+        image.style.width = `${state.imgWidth * state.scale}px`;
+        image.style.height = `${state.imgHeight * state.scale}px`;
+        image.style.transform = `translate(${state.offsetX}px, ${state.offsetY}px)`;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 320, 320);
+        ctx.drawImage(
+            image,
+            state.offsetX * (320 / stage.clientWidth),
+            state.offsetY * (320 / stage.clientWidth),
+            state.imgWidth * state.scale * (320 / stage.clientWidth),
+            state.imgHeight * state.scale * (320 / stage.clientWidth)
+        );
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+        hidden.value = dataUrl;
+        preview.src = dataUrl;
+        preview.classList.remove('hidden');
+        previewEmpty.classList.add('hidden');
+    }
+
+    function fitImage() {
+        const stageSize = stage.clientWidth;
+        state.minScale = Math.max(stageSize / state.imgWidth, stageSize / state.imgHeight);
+        state.scale = state.minScale;
+        zoom.min = state.minScale.toFixed(2);
+        zoom.max = Math.max(state.minScale + 2, state.minScale * 3).toFixed(2);
+        zoom.value = state.scale.toFixed(2);
+        state.offsetX = (stageSize - state.imgWidth * state.scale) / 2;
+        state.offsetY = (stageSize - state.imgHeight * state.scale) / 2;
+        render();
+    }
+
+    function setImageSource(src) {
+        image.onload = () => {
+            state.imgWidth = image.naturalWidth;
+            state.imgHeight = image.naturalHeight;
+            image.classList.remove('hidden');
+            placeholder.classList.add('hidden');
+            fitImage();
+        };
+        image.src = src;
+    }
+
+    input.addEventListener('change', (event) => {
+        const [file] = event.target.files || [];
+        if (!file) {
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => setImageSource(reader.result);
+        reader.readAsDataURL(file);
+    });
+
+    zoom.addEventListener('input', () => {
+        if (!state.imgWidth || !state.imgHeight) {
+            return;
+        }
+
+        const previousScale = state.scale;
+        state.scale = Math.max(state.minScale, parseFloat(zoom.value || '1'));
+        const stageSize = stage.clientWidth;
+        const centerX = (stageSize / 2) - state.offsetX;
+        const centerY = (stageSize / 2) - state.offsetY;
+        const ratio = state.scale / previousScale;
+        state.offsetX = (stageSize / 2) - centerX * ratio;
+        state.offsetY = (stageSize / 2) - centerY * ratio;
+        render();
+    });
+
+    reset.addEventListener('click', () => {
+        if (!state.imgWidth || !state.imgHeight) {
+            return;
+        }
+        fitImage();
+    });
+
+    stage.addEventListener('pointerdown', (event) => {
+        if (image.classList.contains('hidden')) {
+            return;
+        }
+        state.dragging = true;
+        state.dragX = event.clientX - state.offsetX;
+        state.dragY = event.clientY - state.offsetY;
+        stage.setPointerCapture(event.pointerId);
+    });
+
+    stage.addEventListener('pointermove', (event) => {
+        if (!state.dragging) {
+            return;
+        }
+        state.offsetX = event.clientX - state.dragX;
+        state.offsetY = event.clientY - state.dragY;
+        render();
+    });
+
+    function stopDragging(event) {
+        if (!state.dragging) {
+            return;
+        }
+        state.dragging = false;
+        if (event && stage.hasPointerCapture(event.pointerId)) {
+            stage.releasePointerCapture(event.pointerId);
+        }
+    }
+
+    stage.addEventListener('pointerup', stopDragging);
+    stage.addEventListener('pointercancel', stopDragging);
+
+    if (image.getAttribute('src')) {
+        setImageSource(image.getAttribute('src'));
+    }
+});
+</script>
+@endpush
