@@ -413,7 +413,8 @@ class ConfiguracionController extends Controller
         }
 
         if (!class_exists(\Verot\Upload\Upload::class)) {
-            throw new \RuntimeException('No se pudo cargar la libreria de procesamiento de imagenes.');
+            $this->processLogoWithGd($sourcePath, $destination, $filename, $format, $width, $height, $quality);
+            return;
         }
 
         $handle = new \Verot\Upload\Upload($sourcePath);
@@ -442,6 +443,51 @@ class ConfiguracionController extends Controller
         }
 
         $handle->clean();
+    }
+
+    private function processLogoWithGd(string $sourcePath, string $destination, string $filename, string $format, int $width, int $height, int $quality): void
+    {
+        $binary = file_get_contents($sourcePath);
+        if ($binary === false) {
+            throw new \RuntimeException('No pude leer temporalmente el logo.');
+        }
+
+        $source = @imagecreatefromstring($binary);
+        if (!$source) {
+            throw new \RuntimeException('No pude abrir la imagen del logo para procesarla.');
+        }
+
+        $srcWidth = imagesx($source);
+        $srcHeight = imagesy($source);
+        $scale = min($width / max(1, $srcWidth), $height / max(1, $srcHeight));
+        $drawWidth = max(1, (int) round($srcWidth * $scale));
+        $drawHeight = max(1, (int) round($srcHeight * $scale));
+        $dstX = (int) floor(($width - $drawWidth) / 2);
+        $dstY = (int) floor(($height - $drawHeight) / 2);
+
+        $canvas = imagecreatetruecolor($width, $height);
+        if (!$canvas) {
+            imagedestroy($source);
+            throw new \RuntimeException('No pude preparar la imagen final del logo.');
+        }
+
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        imagefilledrectangle($canvas, 0, 0, $width, $height, $white);
+        imagecopyresampled($canvas, $source, $dstX, $dstY, 0, 0, $drawWidth, $drawHeight, $srcWidth, $srcHeight);
+
+        $target = rtrim($destination, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename . '.' . $format;
+        $saved = match (strtolower($format)) {
+            'jpg', 'jpeg' => imagejpeg($canvas, $target, $quality),
+            'png' => imagepng($canvas, $target, 9),
+            default => false,
+        };
+
+        imagedestroy($canvas);
+        imagedestroy($source);
+
+        if (!$saved) {
+            throw new \RuntimeException('No pude guardar el logo procesado.');
+        }
     }
 
     private function deleteExistingLogoFiles(int $userId): void
