@@ -153,7 +153,7 @@
                             <div>
                                 <label class="block text-sm font-medium mb-2">Logo</label>
                                 <div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-5">
-                                    <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" class="sr-only" onchange="window.factucareLogoCropper && window.factucareLogoCropper.handleFileChange(event)">
+                                    <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" class="sr-only" onchange="window.handleLogoInputChange && window.handleLogoInputChange(this)">
                                     <input id="logo_cropped" type="hidden" name="logo_cropped">
 
                                     <div class="flex flex-wrap items-center gap-3">
@@ -387,7 +387,7 @@
     const preview50 = document.getElementById('logo-modal-preview-50');
     const previewLarge = document.getElementById('logo-modal-preview-large');
 
-    if (!input || !hidden || !preview || !previewEmpty || !selectedName || !modal || !modalBackdrop || !modalClose || !modalCancel || !modalApply || !cropStage || !cropImage || !zoom || !reset || !bgColor || !bgLabel || !preview50 || !previewLarge) {
+    if (!input || !hidden || !preview || !previewEmpty || !selectedName || !modal || !modalBackdrop || !modalClose || !modalCancel || !modalApply || !cropStage || !cropImage || !zoom || !reset || !preview50 || !previewLarge) {
         return;
     }
 
@@ -406,7 +406,7 @@
         pendingFileName: '',
         hadPendingSelection: false,
         originalLabel: selectedName.textContent,
-        background: bgColor.value || '#ffffff',
+        background: (bgColor && bgColor.value) ? bgColor.value : '#ffffff',
     };
 
     function openModal() {
@@ -454,7 +454,9 @@
 
     function applyStageBackground() {
         cropStage.style.backgroundColor = state.background;
-        bgLabel.textContent = state.background.toUpperCase();
+        if (bgLabel) {
+            bgLabel.textContent = state.background.toUpperCase();
+        }
     }
 
     function scaleFromZoomValue(value) {
@@ -463,11 +465,15 @@
     }
 
     function buildCroppedDataUrl() {
+        const stageSize = cropStage.clientWidth;
+        if (!stageSize) {
+            return '';
+        }
+
         const canvas = document.createElement('canvas');
         canvas.width = 320;
         canvas.height = 320;
         const ctx = canvas.getContext('2d');
-        const stageSize = cropStage.clientWidth;
         const ratio = 320 / stageSize;
 
         ctx.fillStyle = state.background;
@@ -500,6 +506,9 @@
 
     function fitImage() {
         const stageSize = cropStage.clientWidth;
+        if (!stageSize) {
+            return;
+        }
         state.baseScale = Math.min(stageSize / state.imgWidth, stageSize / state.imgHeight);
         zoom.value = '0';
         state.scale = scaleFromZoomValue(zoom.value);
@@ -509,11 +518,11 @@
     }
 
     function loadImage(src) {
+        openModal();
         cropImage.onload = () => {
             state.imgWidth = cropImage.naturalWidth;
             state.imgHeight = cropImage.naturalHeight;
             cropImage.classList.remove('hidden');
-            openModal();
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                     fitImage();
@@ -525,6 +534,9 @@
 
     function commitCrop() {
         const dataUrl = buildCroppedDataUrl();
+        if (!dataUrl) {
+            return;
+        }
         state.croppedDataUrl = dataUrl;
         hidden.value = dataUrl;
         preview.src = dataUrl;
@@ -535,8 +547,8 @@
         closeModal();
     }
 
-    function handleFileChange(event) {
-        const [file] = event.target.files || [];
+    function handleFileChangeFromInput(inputEl) {
+        const [file] = inputEl.files || [];
         if (!file) {
             return;
         }
@@ -574,13 +586,15 @@
         fitImage();
     });
 
-    bgColor.addEventListener('input', () => {
-        state.background = bgColor.value || '#ffffff';
-        applyStageBackground();
-        if (state.imgWidth && state.imgHeight) {
-            renderCrop();
-        }
-    });
+    if (bgColor) {
+        bgColor.addEventListener('input', () => {
+            state.background = bgColor.value || '#ffffff';
+            applyStageBackground();
+            if (state.imgWidth && state.imgHeight) {
+                renderCrop();
+            }
+        });
+    }
 
     cropStage.addEventListener('pointerdown', (event) => {
         if (cropImage.classList.contains('hidden')) {
@@ -632,10 +646,11 @@
             closeModal();
         }
     });
-    input.addEventListener('change', handleFileChange);
+    input.addEventListener('change', () => handleFileChangeFromInput(input));
     applyStageBackground();
+    window.handleLogoInputChange = handleFileChangeFromInput;
     window.factucareLogoCropper = {
-        handleFileChange,
+        handleFileChange: () => handleFileChangeFromInput(input),
         openModal,
         closeModal,
     };
