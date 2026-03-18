@@ -153,7 +153,7 @@
                             <div>
                                 <label class="block text-sm font-medium mb-2">Logo</label>
                                 <div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-5">
-                                    <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" class="sr-only">
+                                    <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" class="sr-only" onchange="window.factucareLogoCropper && window.factucareLogoCropper.handleFileChange(event)">
                                     <input id="logo_cropped" type="hidden" name="logo_cropped">
 
                                     <div class="flex flex-wrap items-center gap-3">
@@ -353,9 +353,8 @@
     </div>
 </x-app-layout>
 
-@push('scripts')
 <script>
-function initLogoCropper() {
+(() => {
     const input = document.getElementById('logo');
     const hidden = document.getElementById('logo_cropped');
     const preview = document.getElementById('logo-preview');
@@ -502,7 +501,7 @@ function initLogoCropper() {
         closeModal();
     }
 
-    input.addEventListener('change', (event) => {
+    function handleFileChange(event) {
         const [file] = event.target.files || [];
         if (!file) {
             return;
@@ -516,7 +515,7 @@ function initLogoCropper() {
         }
         state.lastObjectUrl = URL.createObjectURL(file);
         loadImage(state.lastObjectUrl);
-    });
+    }
 
     zoom.addEventListener('input', () => {
         if (!state.imgWidth || !state.imgHeight) {
@@ -591,12 +590,11 @@ function initLogoCropper() {
             closeModal();
         }
     });
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initLogoCropper, { once: true });
-} else {
-    initLogoCropper();
-}
+    input.addEventListener('change', handleFileChange);
+    window.factucareLogoCropper = {
+        handleFileChange,
+        openModal,
+        closeModal,
+    };
+})();
 </script>
-@endpush
