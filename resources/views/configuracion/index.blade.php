@@ -434,12 +434,22 @@
         const stageSize = cropStage.clientWidth;
         const drawWidth = state.imgWidth * state.scale;
         const drawHeight = state.imgHeight * state.scale;
-        const minX = drawWidth <= stageSize ? stageSize - drawWidth : stageSize - drawWidth;
-        const minY = drawHeight <= stageSize ? stageSize - drawHeight : stageSize - drawHeight;
-        const maxX = 0;
-        const maxY = 0;
-        state.offsetX = Math.min(maxX, Math.max(minX, state.offsetX));
-        state.offsetY = Math.min(maxY, Math.max(minY, state.offsetY));
+
+        if (drawWidth <= stageSize) {
+            state.offsetX = (stageSize - drawWidth) / 2;
+        } else {
+            const minX = stageSize - drawWidth;
+            const maxX = 0;
+            state.offsetX = Math.min(maxX, Math.max(minX, state.offsetX));
+        }
+
+        if (drawHeight <= stageSize) {
+            state.offsetY = (stageSize - drawHeight) / 2;
+        } else {
+            const minY = stageSize - drawHeight;
+            const maxY = 0;
+            state.offsetY = Math.min(maxY, Math.max(minY, state.offsetY));
+        }
     }
 
     function applyStageBackground() {

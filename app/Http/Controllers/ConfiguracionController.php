@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
-use Verot\Upload\Upload;
 
 class ConfiguracionController extends Controller
 {
@@ -406,7 +405,18 @@ class ConfiguracionController extends Controller
 
     private function processLogoWithUpload(string $sourcePath, string $destination, string $filename, string $format, int $width, int $height, int $quality): void
     {
-        $handle = new Upload($sourcePath);
+        if (!class_exists(\Verot\Upload\Upload::class)) {
+            $uploadClass = base_path('vendor/verot/class.upload.php/src/class.upload.php');
+            if (is_file($uploadClass)) {
+                require_once $uploadClass;
+            }
+        }
+
+        if (!class_exists(\Verot\Upload\Upload::class)) {
+            throw new \RuntimeException('No se pudo cargar la libreria de procesamiento de imagenes.');
+        }
+
+        $handle = new \Verot\Upload\Upload($sourcePath);
         if (!$handle->uploaded) {
             throw new \RuntimeException('No pude abrir la imagen del logo para procesarla.');
         }
