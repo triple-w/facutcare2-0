@@ -157,7 +157,7 @@
                                     <input id="logo_cropped" type="hidden" name="logo_cropped">
 
                                     <div class="flex flex-wrap items-center gap-3">
-                                        <label for="logo" class="inline-flex cursor-pointer items-center justify-center rounded-md border border-sky-700 bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700">
+                                        <label for="logo" class="inline-flex cursor-pointer items-center justify-center rounded-md border border-violet-700 bg-violet-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-violet-700">
                                             Subir foto
                                         </label>
                                         <span id="logo-selected-name" class="text-sm text-gray-500">
@@ -346,7 +346,7 @@
 
                 <div class="flex flex-wrap justify-end gap-3 border-t border-gray-100 px-6 py-4">
                     <button type="button" id="logo-modal-cancel" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50">Cancelar</button>
-                    <button type="button" id="logo-modal-apply" class="inline-flex items-center justify-center rounded-md border border-sky-700 bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700">Usar este recorte</button>
+                    <button type="button" id="logo-modal-apply" class="inline-flex items-center justify-center rounded-md border border-violet-700 bg-violet-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-violet-700">Usar este recorte</button>
                 </div>
             </div>
         </div>
@@ -355,7 +355,7 @@
 
 @push('scripts')
 <script>
-document.addEventListener('DOMContentLoaded', () => {
+function initLogoCropper() {
     const input = document.getElementById('logo');
     const hidden = document.getElementById('logo_cropped');
     const preview = document.getElementById('logo-preview');
@@ -587,6 +587,12 @@ document.addEventListener('DOMContentLoaded', () => {
             closeModal();
         }
     });
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initLogoCropper, { once: true });
+} else {
+    initLogoCropper();
+}
 </script>
 @endpush
