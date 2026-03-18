@@ -315,7 +315,20 @@
                                 <span>Zoom</span>
                                 <button type="button" id="logo-reset" class="rounded-md border border-gray-300 bg-white px-3 py-1 normal-case tracking-normal text-gray-700 transition hover:bg-gray-50">Restablecer</button>
                             </div>
-                            <input id="logo-zoom" type="range" min="1" max="3" step="0.01" value="1" class="w-full">
+                            <input id="logo-zoom" type="range" min="-100" max="200" step="1" value="0" class="w-full">
+                            <div class="mt-1 flex justify-between text-[11px] text-gray-400">
+                                <span>Alejar</span>
+                                <span>0</span>
+                                <span>Acercar</span>
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            <label for="logo-bg-color" class="mb-2 block text-xs font-medium uppercase tracking-wide text-gray-500">Color de fondo</label>
+                            <div class="flex items-center gap-3">
+                                <input id="logo-bg-color" type="color" value="#ffffff" class="h-10 w-16 cursor-pointer rounded border border-gray-300 bg-white p-1">
+                                <span id="logo-bg-label" class="text-sm text-gray-600">#FFFFFF</span>
+                            </div>
                         </div>
                     </div>
 
@@ -369,10 +382,12 @@
     const cropImage = document.getElementById('logo-crop-image');
     const zoom = document.getElementById('logo-zoom');
     const reset = document.getElementById('logo-reset');
+    const bgColor = document.getElementById('logo-bg-color');
+    const bgLabel = document.getElementById('logo-bg-label');
     const preview50 = document.getElementById('logo-modal-preview-50');
     const previewLarge = document.getElementById('logo-modal-preview-large');
 
-    if (!input || !hidden || !preview || !previewEmpty || !selectedName || !modal || !modalBackdrop || !modalClose || !modalCancel || !modalApply || !cropStage || !cropImage || !zoom || !reset || !preview50 || !previewLarge) {
+    if (!input || !hidden || !preview || !previewEmpty || !selectedName || !modal || !modalBackdrop || !modalClose || !modalCancel || !modalApply || !cropStage || !cropImage || !zoom || !reset || !bgColor || !bgLabel || !preview50 || !previewLarge) {
         return;
     }
 
@@ -380,7 +395,7 @@
         imgWidth: 0,
         imgHeight: 0,
         scale: 1,
-        minScale: 1,
+        baseScale: 1,
         offsetX: 0,
         offsetY: 0,
         dragging: false,
@@ -391,6 +406,7 @@
         pendingFileName: '',
         hadPendingSelection: false,
         originalLabel: selectedName.textContent,
+        background: bgColor.value || '#ffffff',
     };
 
     function openModal() {
@@ -418,12 +434,22 @@
         const stageSize = cropStage.clientWidth;
         const drawWidth = state.imgWidth * state.scale;
         const drawHeight = state.imgHeight * state.scale;
-        const minX = Math.min(0, stageSize - drawWidth);
-        const minY = Math.min(0, stageSize - drawHeight);
-        const maxX = Math.max(0, stageSize - drawWidth);
-        const maxY = Math.max(0, stageSize - drawHeight);
+        const minX = drawWidth <= stageSize ? stageSize - drawWidth : stageSize - drawWidth;
+        const minY = drawHeight <= stageSize ? stageSize - drawHeight : stageSize - drawHeight;
+        const maxX = 0;
+        const maxY = 0;
         state.offsetX = Math.min(maxX, Math.max(minX, state.offsetX));
         state.offsetY = Math.min(maxY, Math.max(minY, state.offsetY));
+    }
+
+    function applyStageBackground() {
+        cropStage.style.backgroundColor = state.background;
+        bgLabel.textContent = state.background.toUpperCase();
+    }
+
+    function scaleFromZoomValue(value) {
+        const zoomValue = parseInt(value || '0', 10);
+        return state.baseScale * Math.pow(1.015, zoomValue);
     }
 
     function buildCroppedDataUrl() {
@@ -434,7 +460,7 @@
         const stageSize = cropStage.clientWidth;
         const ratio = 320 / stageSize;
 
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = state.background;
         ctx.fillRect(0, 0, 320, 320);
         ctx.drawImage(
             cropImage,
@@ -464,11 +490,9 @@
 
     function fitImage() {
         const stageSize = cropStage.clientWidth;
-        state.minScale = Math.max(stageSize / state.imgWidth, stageSize / state.imgHeight);
-        state.scale = state.minScale;
-        zoom.min = state.minScale.toFixed(2);
-        zoom.max = Math.max(state.minScale + 2, state.minScale * 3).toFixed(2);
-        zoom.value = state.scale.toFixed(2);
+        state.baseScale = Math.min(stageSize / state.imgWidth, stageSize / state.imgHeight);
+        zoom.value = '0';
+        state.scale = scaleFromZoomValue(zoom.value);
         state.offsetX = (stageSize - (state.imgWidth * state.scale)) / 2;
         state.offsetY = (stageSize - (state.imgHeight * state.scale)) / 2;
         renderCrop();
@@ -523,7 +547,7 @@
         }
 
         const previousScale = state.scale;
-        state.scale = Math.max(state.minScale, parseFloat(zoom.value || '1'));
+        state.scale = scaleFromZoomValue(zoom.value);
         const stageSize = cropStage.clientWidth;
         const centerX = (stageSize / 2) - state.offsetX;
         const centerY = (stageSize / 2) - state.offsetY;
@@ -538,6 +562,14 @@
             return;
         }
         fitImage();
+    });
+
+    bgColor.addEventListener('input', () => {
+        state.background = bgColor.value || '#ffffff';
+        applyStageBackground();
+        if (state.imgWidth && state.imgHeight) {
+            renderCrop();
+        }
     });
 
     cropStage.addEventListener('pointerdown', (event) => {
@@ -591,6 +623,7 @@
         }
     });
     input.addEventListener('change', handleFileChange);
+    applyStageBackground();
     window.factucareLogoCropper = {
         handleFileChange,
         openModal,
