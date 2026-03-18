@@ -152,56 +152,35 @@
                         <div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_280px] items-start">
                             <div>
                                 <label class="block text-sm font-medium mb-2">Logo</label>
-                                <div id="logo-cropper" class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4">
+                                <div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-5">
                                     <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" class="sr-only">
                                     <input id="logo_cropped" type="hidden" name="logo_cropped">
 
                                     <div class="flex flex-wrap items-center gap-3">
                                         <label for="logo" class="inline-flex cursor-pointer items-center justify-center rounded-md border border-sky-700 bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700">
-                                            Seleccionar logo
+                                            Subir foto
                                         </label>
-                                        <button type="button" id="logo-reset" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
-                                            Restablecer recorte
-                                        </button>
+                                        <span id="logo-selected-name" class="text-sm text-gray-500">
+                                            {{ $logoUrl ? 'Logo actual cargado' : 'Ningún archivo seleccionado' }}
+                                        </span>
                                     </div>
 
                                     <p class="mt-3 text-xs text-gray-600">
-                                        De preferencia sube una imagen chica en formato JPG. El sistema la recorta en cuadrado y la guarda optimizada para facturas.
+                                        De preferencia sube una imagen chica en formato JPG. Después de elegirla se abrirá un modal para recortarla y acomodarla en cuadro antes de guardar.
                                     </p>
 
-                                    <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-                                        <div>
-                                            <div class="rounded-xl border border-gray-200 bg-white p-4">
-                                                <div class="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Recorte</div>
-                                                <div class="mx-auto w-full max-w-[320px]">
-                                                    <div id="logo-crop-stage" class="relative aspect-square overflow-hidden rounded-xl bg-[linear-gradient(45deg,#f3f4f6_25%,transparent_25%),linear-gradient(-45deg,#f3f4f6_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f3f4f6_75%),linear-gradient(-45deg,transparent_75%,#f3f4f6_75%)] bg-[length:20px_20px] bg-[position:0_0,0_10px,10px_-10px,-10px_0px]">
-                                                        <img id="logo-crop-image" src="{{ $logoUrl ?? '' }}" alt="Recorte del logo" class="absolute left-0 top-0 hidden max-w-none select-none" draggable="false">
-                                                        <div id="logo-crop-placeholder" class="flex h-full items-center justify-center text-center text-sm text-gray-400">
-                                                            Elige una imagen para ajustar el recorte
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div class="mt-4">
-                                                <label for="logo-zoom" class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Zoom</label>
-                                                <input id="logo-zoom" type="range" min="1" max="3" step="0.01" value="1" class="w-full">
+                                    <div class="mt-5 flex flex-wrap items-start gap-5">
+                                        <div class="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                                            <img id="logo-preview" src="{{ $logoUrl ?? '' }}" alt="Vista previa del logo" class="h-32 w-32 rounded-xl object-cover {{ $logoUrl ? '' : 'hidden' }}">
+                                            <div id="logo-preview-empty" class="flex h-32 w-32 items-center justify-center rounded-xl bg-gray-100 text-center text-xs text-gray-400 {{ $logoUrl ? 'hidden' : '' }}">
+                                                Aquí verás el logo recortado
                                             </div>
                                         </div>
 
-                                        <div class="rounded-xl border border-gray-200 bg-white p-4">
-                                            <div class="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Vista previa</div>
-                                            <div class="flex items-center justify-center">
-                                                <div class="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-                                                    <img id="logo-preview" src="{{ $logoUrl ?? '' }}" alt="Vista previa del logo" class="h-36 w-36 rounded-lg object-cover {{ $logoUrl ? '' : 'hidden' }}">
-                                                    <div id="logo-preview-empty" class="flex h-36 w-36 items-center justify-center rounded-lg bg-gray-100 text-center text-xs text-gray-400 {{ $logoUrl ? 'hidden' : '' }}">
-                                                        Aquí verás cómo quedará el logo
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <p class="mt-3 text-xs text-gray-500">
-                                                Tamaño de salida: JPG cuadrado optimizado. También se genera la miniatura PNG que usa el PAC.
-                                            </p>
+                                        <div class="max-w-sm text-sm text-gray-600">
+                                            <div class="font-medium text-gray-900">Salida del sistema</div>
+                                            <p class="mt-1">Se genera una imagen nueva en `.jpg` con el recorte confirmado por el usuario.</p>
+                                            <p class="mt-2">Además se conserva la miniatura `.png` para el PAC y para la vista previa dentro del sistema.</p>
 
                                             @if ($logoUrl)
                                                 <form method="POST" action="{{ route('configuracion.logo.destroy') }}" class="mt-4">
@@ -310,6 +289,68 @@
             </div>
         </div>
     </div>
+    <div id="logo-modal" class="fixed inset-0 z-50 hidden">
+        <div id="logo-modal-backdrop" class="absolute inset-0 bg-gray-900/70"></div>
+        <div class="relative flex min-h-full items-center justify-center p-4">
+            <div class="w-full max-w-4xl rounded-2xl bg-white shadow-2xl">
+                <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900">Recortar logo</h3>
+                        <p class="mt-1 text-sm text-gray-500">Ajusta tu imagen dentro del cuadro. La vista pequeña representa el resultado ideal de 50x50.</p>
+                    </div>
+                    <button type="button" id="logo-modal-close" class="rounded-md p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700">Cerrar</button>
+                </div>
+
+                <div class="grid gap-6 px-6 py-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+                    <div>
+                        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                            <div id="logo-crop-stage" class="relative mx-auto aspect-square max-w-[420px] overflow-hidden rounded-2xl bg-[linear-gradient(45deg,#f3f4f6_25%,transparent_25%),linear-gradient(-45deg,#f3f4f6_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f3f4f6_75%),linear-gradient(-45deg,transparent_75%,#f3f4f6_75%)] bg-[length:20px_20px] bg-[position:0_0,0_10px,10px_-10px,-10px_0px]">
+                                <img id="logo-crop-image" alt="Logo para recortar" class="absolute left-0 top-0 hidden max-w-none select-none" draggable="false">
+                                <div class="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-black/10"></div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            <div class="mb-2 flex items-center justify-between text-xs font-medium uppercase tracking-wide text-gray-500">
+                                <span>Zoom</span>
+                                <button type="button" id="logo-reset" class="rounded-md border border-gray-300 bg-white px-3 py-1 normal-case tracking-normal text-gray-700 transition hover:bg-gray-50">Restablecer</button>
+                            </div>
+                            <input id="logo-zoom" type="range" min="1" max="3" step="0.01" value="1" class="w-full">
+                        </div>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                            <div class="text-xs font-medium uppercase tracking-wide text-gray-500">Vista ideal 50x50</div>
+                            <div class="mt-3 flex items-center justify-center">
+                                <div class="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                                    <img id="logo-modal-preview-50" alt="Vista previa 50x50" class="h-[50px] w-[50px] rounded-md object-cover">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                            <div class="text-xs font-medium uppercase tracking-wide text-gray-500">Vista final</div>
+                            <div class="mt-3 flex items-center justify-center">
+                                <div class="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                                    <img id="logo-modal-preview-large" alt="Vista previa grande" class="h-32 w-32 rounded-lg object-cover">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                            Mueve la imagen con el mouse y usa el zoom para acomodar el logo dentro del cuadro.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap justify-end gap-3 border-t border-gray-100 px-6 py-4">
+                    <button type="button" id="logo-modal-cancel" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50">Cancelar</button>
+                    <button type="button" id="logo-modal-apply" class="inline-flex items-center justify-center rounded-md border border-sky-700 bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700">Usar este recorte</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </x-app-layout>
 
 @push('scripts')
@@ -317,15 +358,22 @@
 document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('logo');
     const hidden = document.getElementById('logo_cropped');
-    const image = document.getElementById('logo-crop-image');
     const preview = document.getElementById('logo-preview');
     const previewEmpty = document.getElementById('logo-preview-empty');
-    const placeholder = document.getElementById('logo-crop-placeholder');
-    const stage = document.getElementById('logo-crop-stage');
+    const selectedName = document.getElementById('logo-selected-name');
+    const modal = document.getElementById('logo-modal');
+    const modalBackdrop = document.getElementById('logo-modal-backdrop');
+    const modalClose = document.getElementById('logo-modal-close');
+    const modalCancel = document.getElementById('logo-modal-cancel');
+    const modalApply = document.getElementById('logo-modal-apply');
+    const cropStage = document.getElementById('logo-crop-stage');
+    const cropImage = document.getElementById('logo-crop-image');
     const zoom = document.getElementById('logo-zoom');
     const reset = document.getElementById('logo-reset');
+    const preview50 = document.getElementById('logo-modal-preview-50');
+    const previewLarge = document.getElementById('logo-modal-preview-large');
 
-    if (!input || !hidden || !image || !preview || !placeholder || !stage || !zoom || !reset) {
+    if (!input || !hidden || !preview || !previewEmpty || !selectedName || !modal || !modalBackdrop || !modalClose || !modalCancel || !modalApply || !cropStage || !cropImage || !zoom || !reset || !preview50 || !previewLarge) {
         return;
     }
 
@@ -339,10 +387,36 @@ document.addEventListener('DOMContentLoaded', () => {
         dragging: false,
         dragX: 0,
         dragY: 0,
+        lastObjectUrl: null,
+        croppedDataUrl: hidden.value || '',
+        pendingFileName: '',
+        hadPendingSelection: false,
+        originalLabel: selectedName.textContent,
     };
 
+    function openModal() {
+        modal.classList.remove('hidden');
+        document.body.classList.add('overflow-hidden');
+    }
+
+    function closeModal() {
+        modal.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden');
+    }
+
+    function discardPendingSelection() {
+        if (!state.hadPendingSelection) {
+            return;
+        }
+
+        input.value = '';
+        state.hadPendingSelection = false;
+        state.pendingFileName = '';
+        selectedName.textContent = state.originalLabel;
+    }
+
     function clampOffsets() {
-        const stageSize = stage.clientWidth;
+        const stageSize = cropStage.clientWidth;
         const drawWidth = state.imgWidth * state.scale;
         const drawHeight = state.imgHeight * state.scale;
         const minX = Math.min(0, stageSize - drawWidth);
@@ -353,58 +427,75 @@ document.addEventListener('DOMContentLoaded', () => {
         state.offsetY = Math.min(maxY, Math.max(minY, state.offsetY));
     }
 
-    function render() {
+    function buildCroppedDataUrl() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        const stageSize = cropStage.clientWidth;
+        const ratio = 320 / stageSize;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 320, 320);
+        ctx.drawImage(
+            cropImage,
+            state.offsetX * ratio,
+            state.offsetY * ratio,
+            state.imgWidth * state.scale * ratio,
+            state.imgHeight * state.scale * ratio
+        );
+
+        return canvas.toDataURL('image/jpeg', 0.92);
+    }
+
+    function renderCrop() {
         if (!state.imgWidth || !state.imgHeight) {
             return;
         }
 
         clampOffsets();
-        image.style.width = `${state.imgWidth * state.scale}px`;
-        image.style.height = `${state.imgHeight * state.scale}px`;
-        image.style.transform = `translate(${state.offsetX}px, ${state.offsetY}px)`;
+        cropImage.style.width = `${state.imgWidth * state.scale}px`;
+        cropImage.style.height = `${state.imgHeight * state.scale}px`;
+        cropImage.style.transform = `translate(${state.offsetX}px, ${state.offsetY}px)`;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 320;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, 320, 320);
-        ctx.drawImage(
-            image,
-            state.offsetX * (320 / stage.clientWidth),
-            state.offsetY * (320 / stage.clientWidth),
-            state.imgWidth * state.scale * (320 / stage.clientWidth),
-            state.imgHeight * state.scale * (320 / stage.clientWidth)
-        );
-
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-        hidden.value = dataUrl;
-        preview.src = dataUrl;
-        preview.classList.remove('hidden');
-        previewEmpty.classList.add('hidden');
+        const dataUrl = buildCroppedDataUrl();
+        preview50.src = dataUrl;
+        previewLarge.src = dataUrl;
     }
 
     function fitImage() {
-        const stageSize = stage.clientWidth;
+        const stageSize = cropStage.clientWidth;
         state.minScale = Math.max(stageSize / state.imgWidth, stageSize / state.imgHeight);
         state.scale = state.minScale;
         zoom.min = state.minScale.toFixed(2);
         zoom.max = Math.max(state.minScale + 2, state.minScale * 3).toFixed(2);
         zoom.value = state.scale.toFixed(2);
-        state.offsetX = (stageSize - state.imgWidth * state.scale) / 2;
-        state.offsetY = (stageSize - state.imgHeight * state.scale) / 2;
-        render();
+        state.offsetX = (stageSize - (state.imgWidth * state.scale)) / 2;
+        state.offsetY = (stageSize - (state.imgHeight * state.scale)) / 2;
+        renderCrop();
     }
 
-    function setImageSource(src) {
-        image.onload = () => {
-            state.imgWidth = image.naturalWidth;
-            state.imgHeight = image.naturalHeight;
-            image.classList.remove('hidden');
-            placeholder.classList.add('hidden');
+    function loadImage(src) {
+        cropImage.onload = () => {
+            state.imgWidth = cropImage.naturalWidth;
+            state.imgHeight = cropImage.naturalHeight;
+            cropImage.classList.remove('hidden');
             fitImage();
+            openModal();
         };
-        image.src = src;
+        cropImage.src = src;
+    }
+
+    function commitCrop() {
+        const dataUrl = buildCroppedDataUrl();
+        state.croppedDataUrl = dataUrl;
+        hidden.value = dataUrl;
+        preview.src = dataUrl;
+        preview.classList.remove('hidden');
+        previewEmpty.classList.add('hidden');
+        selectedName.textContent = `Recorte listo: ${state.pendingFileName || 'nuevo logo'}`;
+        state.hadPendingSelection = false;
+        closeModal();
     }
 
     input.addEventListener('change', (event) => {
@@ -413,9 +504,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const reader = new FileReader();
-        reader.onload = () => setImageSource(reader.result);
-        reader.readAsDataURL(file);
+        state.hadPendingSelection = true;
+        state.pendingFileName = file.name;
+        selectedName.textContent = file.name;
+        if (state.lastObjectUrl) {
+            URL.revokeObjectURL(state.lastObjectUrl);
+        }
+        state.lastObjectUrl = URL.createObjectURL(file);
+        loadImage(state.lastObjectUrl);
     });
 
     zoom.addEventListener('input', () => {
@@ -425,13 +521,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const previousScale = state.scale;
         state.scale = Math.max(state.minScale, parseFloat(zoom.value || '1'));
-        const stageSize = stage.clientWidth;
+        const stageSize = cropStage.clientWidth;
         const centerX = (stageSize / 2) - state.offsetX;
         const centerY = (stageSize / 2) - state.offsetY;
         const ratio = state.scale / previousScale;
-        state.offsetX = (stageSize / 2) - centerX * ratio;
-        state.offsetY = (stageSize / 2) - centerY * ratio;
-        render();
+        state.offsetX = (stageSize / 2) - (centerX * ratio);
+        state.offsetY = (stageSize / 2) - (centerY * ratio);
+        renderCrop();
     });
 
     reset.addEventListener('click', () => {
@@ -441,23 +537,23 @@ document.addEventListener('DOMContentLoaded', () => {
         fitImage();
     });
 
-    stage.addEventListener('pointerdown', (event) => {
-        if (image.classList.contains('hidden')) {
+    cropStage.addEventListener('pointerdown', (event) => {
+        if (cropImage.classList.contains('hidden')) {
             return;
         }
         state.dragging = true;
         state.dragX = event.clientX - state.offsetX;
         state.dragY = event.clientY - state.offsetY;
-        stage.setPointerCapture(event.pointerId);
+        cropStage.setPointerCapture(event.pointerId);
     });
 
-    stage.addEventListener('pointermove', (event) => {
+    cropStage.addEventListener('pointermove', (event) => {
         if (!state.dragging) {
             return;
         }
         state.offsetX = event.clientX - state.dragX;
         state.offsetY = event.clientY - state.dragY;
-        render();
+        renderCrop();
     });
 
     function stopDragging(event) {
@@ -465,17 +561,32 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         state.dragging = false;
-        if (event && stage.hasPointerCapture(event.pointerId)) {
-            stage.releasePointerCapture(event.pointerId);
+        if (event && cropStage.hasPointerCapture(event.pointerId)) {
+            cropStage.releasePointerCapture(event.pointerId);
         }
     }
 
-    stage.addEventListener('pointerup', stopDragging);
-    stage.addEventListener('pointercancel', stopDragging);
-
-    if (image.getAttribute('src')) {
-        setImageSource(image.getAttribute('src'));
-    }
+    cropStage.addEventListener('pointerup', stopDragging);
+    cropStage.addEventListener('pointercancel', stopDragging);
+    modalBackdrop.addEventListener('click', () => {
+        discardPendingSelection();
+        closeModal();
+    });
+    modalClose.addEventListener('click', () => {
+        discardPendingSelection();
+        closeModal();
+    });
+    modalCancel.addEventListener('click', () => {
+        discardPendingSelection();
+        closeModal();
+    });
+    modalApply.addEventListener('click', commitCrop);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !modal.classList.contains('hidden')) {
+            discardPendingSelection();
+            closeModal();
+        }
+    });
 });
 </script>
 @endpush

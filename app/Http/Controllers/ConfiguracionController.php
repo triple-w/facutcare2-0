@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
+use Verot\Upload\Upload;
 
 class ConfiguracionController extends Controller
 {
@@ -387,29 +388,65 @@ class ConfiguracionController extends Controller
             mkdir($thumbDir, 0775, true);
         }
 
-        $source = @imagecreatefromstring($binary);
-        if (!$source) {
-            throw new \RuntimeException('El logo no es una imagen válida.');
+        $tempPath = tempnam(sys_get_temp_dir(), 'logo_');
+        if ($tempPath === false || file_put_contents($tempPath, $binary) === false) {
+            throw new \RuntimeException('No pude preparar temporalmente el logo.');
         }
 
-        $size = 320;
-        $width = imagesx($source);
-        $height = imagesy($source);
-        $side = min($width, $height);
-        $srcX = (int) floor(($width - $side) / 2);
-        $srcY = (int) floor(($height - $side) / 2);
+        try {
+            $this->deleteExistingLogoFiles($userId);
+            $this->processLogoWithUpload($tempPath, $baseDir, (string) $userId, 'jpg', 320, 320, 90);
+            $this->processLogoWithUpload($tempPath, $thumbDir, (string) $userId, 'png', 320, 320, 95);
+        } finally {
+            if (is_file($tempPath)) {
+                @unlink($tempPath);
+            }
+        }
+    }
 
-        $canvas = imagecreatetruecolor($size, $size);
-        $white = imagecolorallocate($canvas, 255, 255, 255);
-        imagefilledrectangle($canvas, 0, 0, $size, $size, $white);
-        imagecopyresampled($canvas, $source, 0, 0, $srcX, $srcY, $size, $size, $side, $side);
+    private function processLogoWithUpload(string $sourcePath, string $destination, string $filename, string $format, int $width, int $height, int $quality): void
+    {
+        $handle = new Upload($sourcePath);
+        if (!$handle->uploaded) {
+            throw new \RuntimeException('No pude abrir la imagen del logo para procesarla.');
+        }
 
-        imagejpeg($canvas, public_path("uploads/users_logos/{$userId}.jpg"), 90);
-        imagepng($canvas, public_path("uploads/users_logos/{$userId}.png"));
-        imagepng($canvas, public_path("uploads/users_logos/thumbnails/{$userId}.png"));
+        $handle->allowed = ['image/*'];
+        $handle->file_overwrite = true;
+        $handle->file_auto_rename = false;
+        $handle->file_new_name_body = $filename;
+        $handle->image_resize = true;
+        $handle->image_ratio_crop = true;
+        $handle->image_x = $width;
+        $handle->image_y = $height;
+        $handle->image_convert = $format;
+        $handle->jpeg_quality = $quality;
+        $handle->png_compression = 9;
+        $handle->image_background_color = '#FFFFFF';
+        $handle->process($destination);
 
-        imagedestroy($canvas);
-        imagedestroy($source);
+        if (!$handle->processed) {
+            $error = trim((string) $handle->error);
+            $handle->clean();
+            throw new \RuntimeException($error !== '' ? $error : 'No pude guardar el logo procesado.');
+        }
+
+        $handle->clean();
+    }
+
+    private function deleteExistingLogoFiles(int $userId): void
+    {
+        foreach (['jpg', 'jpeg', 'png', 'webp'] as $ext) {
+            $main = public_path("uploads/users_logos/{$userId}.{$ext}");
+            if (is_file($main)) {
+                @unlink($main);
+            }
+
+            $thumb = public_path("uploads/users_logos/thumbnails/{$userId}.{$ext}");
+            if (is_file($thumb)) {
+                @unlink($thumb);
+            }
+        }
     }
 
     private function getLogoUrl(int $userId): ?string
