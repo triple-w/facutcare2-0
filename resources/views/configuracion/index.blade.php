@@ -480,8 +480,12 @@ function initLogoCropper() {
             state.imgWidth = cropImage.naturalWidth;
             state.imgHeight = cropImage.naturalHeight;
             cropImage.classList.remove('hidden');
-            fitImage();
             openModal();
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    fitImage();
+                });
+            });
         };
         cropImage.src = src;
     }
