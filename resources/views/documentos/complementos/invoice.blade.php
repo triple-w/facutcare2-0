@@ -30,6 +30,15 @@
                     Descargar PDF
                 </a>
             @endif
+
+            <form method="POST" action="{{ route('complementos.regenerarPdf', $comp->id) }}">
+                @csrf
+                <button type="submit"
+                        class="btn bg-yellow-500 text-black hover:bg-yellow-600"
+                        onclick="return confirm('¿Seguro de regenerar el PDF?');">
+                    Regenerar PDF
+                </button>
+            </form>
         </div>
 
         <h2 class="mt-6 font-semibold">Pagos</h2>

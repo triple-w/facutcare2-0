@@ -80,6 +80,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::get('complementos/{id}/ver', [ComplementosController::class, 'ver'])->name('complementos.ver');
         Route::get('complementos/{id}/xml', [ComplementosController::class, 'downloadXml'])->name('complementos.xml');
         Route::get('complementos/{id}/pdf', [ComplementosController::class, 'downloadPdf'])->name('complementos.pdf');
+        Route::post('complementos/{id}/regenerar-pdf', [ComplementosController::class, 'regenerarPdf'])->name('complementos.regenerarPdf');
         Route::post('complementos/{id}/cancelar', [ComplementosController::class, 'cancelar'])->name('complementos.cancelar');
         // AJAX: facturas con saldo insoluto por cliente
         Route::get('complementos/facturas-pendientes', [ComplementosController::class, 'facturasPendientes'])

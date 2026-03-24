@@ -430,6 +430,54 @@ class ComplementosController extends Controller
             ->header('Content-Disposition', 'attachment; filename="'.$filename.'"');
     }
 
+    public function regenerarPdf(int $id)
+    {
+        $userId = auth()->id();
+        $comp = $this->complementoOrFail($id);
+
+        $xml = (string)($comp->xml ?? '');
+        if (trim($xml) === '') {
+            return back()->with('error', 'No hay XML para regenerar el PDF.');
+        }
+
+        $pdfB64 = '';
+
+        try {
+            $payloadMin = [
+                'tipo_comprobante' => 'P',
+                'serie_pago'       => $comp->serie ?? null,
+                'folio_pago'       => $comp->folio ?? null,
+                'fecha_pago'       => $comp->fecha_pago ?? null,
+                'forma_pago_p'     => $comp->forma_pago_p ?? null,
+                'moneda_p'         => $comp->moneda_p ?? null,
+                'num_operacion'    => $comp->num_operacion ?? null,
+            ];
+
+            $clienteMin = (object) [
+                'rfc'          => $comp->rfc ?? '',
+                'razon_social' => $comp->razon_social ?? '',
+            ];
+
+            $pdfB64 = $this->generarPdfBase64ComplementoPagos2($userId, $xml, $payloadMin, $clienteMin);
+        } catch (\Throwable $e) {
+            $pdfB64 = $this->generarPdfBase64FallbackDompdfComplemento($xml);
+        }
+
+        if (!is_string($pdfB64)) {
+            $pdfB64 = '';
+        }
+        if (trim($pdfB64) === '') {
+            return back()->with('error', 'No fue posible regenerar el PDF (PAC y fallback fallaron).');
+        }
+
+        DB::table('complementos')
+            ->where('id', $comp->id)
+            ->where('users_id', $userId)
+            ->update(['pdf' => $pdfB64]);
+
+        return back()->with('success', 'PDF regenerado correctamente.');
+    }
+
     public function cancelar(Request $request, int $id)
     {
         $userId = auth()->id();
@@ -1894,6 +1942,26 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         }
 
         return $pdf;
+    }
+
+    private function generarPdfBase64FallbackDompdfComplemento(string $xmlTimbrado): string
+    {
+        if (!class_exists(\Barryvdh\DomPDF\Facade\Pdf::class)) {
+            return '';
+        }
+
+        $meta = $this->parseCfdiBasicsFromXml($xmlTimbrado);
+        $parties = $this->parseCfdiPartiesFromXml($xmlTimbrado);
+        $logoB64 = $this->getLogoBase64ForUser((int) auth()->id());
+
+        $pdfBinary = \Barryvdh\DomPDF\Facade\Pdf::loadView('documentos.complementos.pdf', [
+            'meta' => $meta,
+            'parties' => $parties,
+            'xml' => $xmlTimbrado,
+            'logoB64' => $logoB64,
+        ])->output();
+
+        return base64_encode($pdfBinary);
     }
 
 
