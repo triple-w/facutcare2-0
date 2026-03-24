@@ -1854,7 +1854,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $xmlB64 = base64_encode($xmlTimbrado);
 
         // Plantilla legacy para complemento de pago
-        $plantilla = 'pagos2';
+        $plantilla = 'pagos20';
 
         $logoB64 = $this->getLogoBase64ForUser($userId) ?? '';
 
