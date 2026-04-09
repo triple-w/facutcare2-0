@@ -1011,7 +1011,7 @@ private function normalizarImpuestosEnPayload(array $payload): array
                 $importeImp = 0.0;
 
                 if (strtolower($factor) !== 'exento') {
-                    $tasa = $tasaPct > 1 ? $tasaPct / 100 : $tasaPct;
+                    $tasa = $tasaPct >= 1 ? $tasaPct / 100 : $tasaPct;
                     $importeImp = round($baseImpuestos * $tasa, 2);
                 }
 
@@ -1048,7 +1048,7 @@ private function normalizarImpuestosEnPayload(array $payload): array
             if (!count($impuestosLinea) && !empty($c['aplica_iva'])) {
                 $tasaIva = (float)($c['iva_tasa'] ?? 0.16);
                 $tasaPct = $tasaIva > 0 && $tasaIva < 1 ? $tasaIva * 100 : $tasaIva;
-                $importeImp = round($baseImpuestos * ($tasaPct > 1 ? $tasaPct / 100 : $tasaPct), 2);
+                $importeImp = round($baseImpuestos * ($tasaPct >= 1 ? $tasaPct / 100 : $tasaPct), 2);
                 $trasladosLinea = round($trasladosLinea + $importeImp, 2);
                 $claveAgrupada = implode('|', ['T', '002', 'tasa', number_format($tasaPct, 4, '.', '')]);
                 if (!isset($impuestosAgrupados[$claveAgrupada])) {
