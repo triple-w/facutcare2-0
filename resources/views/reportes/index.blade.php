@@ -37,10 +37,40 @@
     <div class="py-6">
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-6">
             <div class="bg-white shadow-sm rounded-lg p-6">
-                <form method="GET" action="{{ route('reportes.index') }}" class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                @php
+                    $clientesJson = ($clientes ?? collect())->values()->all();
+                @endphp
+                <form method="GET" action="{{ route('reportes.index') }}" class="grid grid-cols-1 md:grid-cols-5 gap-4"
+                      x-data="{
+                        clientes: @js($clientesJson),
+                        tipo: @js($filters['tipo'] ?? 'facturas'),
+                        fechaInicio: @js($filters['fecha_inicio'] ?? ''),
+                        fechaFin: @js($filters['fecha_fin'] ?? ''),
+                        estatus: @js($filters['estatus'] ?? 'todos'),
+                        clienteQuery: @js($filters['cliente'] ?? ''),
+                        open: false,
+                        get filteredClientes() {
+                          const q = (this.clienteQuery || '').trim().toLowerCase();
+                          if (!q) return this.clientes.slice(0, 12);
+                          return this.clientes.filter(c => (`${c.razon_social} ${c.rfc}`).toLowerCase().includes(q)).slice(0, 12);
+                        },
+                        exportUrl(base) {
+                          const url = new URL(base, window.location.origin);
+                          url.searchParams.set('tipo', this.tipo || 'facturas');
+                          url.searchParams.set('fecha_inicio', this.fechaInicio || '');
+                          url.searchParams.set('fecha_fin', this.fechaFin || '');
+                          url.searchParams.set('estatus', this.estatus || 'todos');
+                          url.searchParams.set('cliente', this.clienteQuery || '');
+                          return url.toString();
+                        },
+                        selectCliente(cliente) {
+                          this.clienteQuery = cliente.label || `${cliente.razon_social} - ${cliente.rfc}`;
+                          this.open = false;
+                        }
+                      }">
                     <div>
                         <label class="block text-sm font-medium mb-1">Tipo de documento</label>
-                        <select name="tipo" class="w-full rounded-md border-gray-300">
+                        <select name="tipo" x-model="tipo" class="w-full rounded-md border-gray-300">
                             <option value="facturas" @selected(($filters['tipo'] ?? '') === 'facturas')>Facturas</option>
                             <option value="complementos" @selected(($filters['tipo'] ?? '') === 'complementos')>Complementos</option>
                             <option value="notas_credito" @selected(($filters['tipo'] ?? '') === 'notas_credito')>Notas de crédito</option>
@@ -50,32 +80,54 @@
 
                     <div>
                         <label class="block text-sm font-medium mb-1">Fecha inicio</label>
-                        <input type="date" name="fecha_inicio" value="{{ $filters['fecha_inicio'] ?? '' }}" class="w-full rounded-md border-gray-300">
+                        <input type="date" name="fecha_inicio" x-model="fechaInicio" class="w-full rounded-md border-gray-300">
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium mb-1">Fecha fin</label>
-                        <input type="date" name="fecha_fin" value="{{ $filters['fecha_fin'] ?? '' }}" class="w-full rounded-md border-gray-300">
+                        <input type="date" name="fecha_fin" x-model="fechaFin" class="w-full rounded-md border-gray-300">
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium mb-1">Estatus</label>
-                        <select name="estatus" class="w-full rounded-md border-gray-300">
+                        <select name="estatus" x-model="estatus" class="w-full rounded-md border-gray-300">
                             <option value="todos" @selected(($filters['estatus'] ?? '') === 'todos')>Todos</option>
                             <option value="vigentes" @selected(($filters['estatus'] ?? '') === 'vigentes')>Vigentes</option>
                             <option value="canceladas" @selected(($filters['estatus'] ?? '') === 'canceladas')>Canceladas</option>
                         </select>
                     </div>
 
-                    <div>
+                    <div class="relative" @click.outside="open = false">
                         <label class="block text-sm font-medium mb-1">Cliente</label>
-                        <input type="text" name="cliente" value="{{ $filters['cliente'] ?? '' }}" placeholder="RFC o razón social" class="w-full rounded-md border-gray-300">
+                        <input type="text"
+                               name="cliente"
+                               x-model="clienteQuery"
+                               @focus="open = true"
+                               @input="open = true"
+                               @keydown.escape="open = false"
+                               autocomplete="off"
+                               placeholder="RFC o razón social"
+                               class="w-full rounded-md border-gray-300">
+                        <div x-show="open && filteredClientes.length" x-transition class="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg" style="display:none;">
+                            <ul class="max-h-64 overflow-auto py-1">
+                                <template x-for="cliente in filteredClientes" :key="cliente.id">
+                                    <li>
+                                        <button type="button"
+                                                class="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                                                @click="selectCliente(cliente)">
+                                            <div class="text-sm font-medium text-gray-900" x-text="cliente.razon_social || '—'"></div>
+                                            <div class="text-xs text-gray-500" x-text="cliente.rfc || ''"></div>
+                                        </button>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
                     </div>
 
                     <div class="flex flex-wrap items-end gap-2 md:col-span-5">
                         <button class="inline-flex items-center justify-center rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-gray-800">Generar</button>
-                        <a href="{{ route('reportes.excel', ['tipo' => $filters['tipo'] ?? 'facturas', 'fecha_inicio' => $filters['fecha_inicio'] ?? '', 'fecha_fin' => $filters['fecha_fin'] ?? '', 'estatus' => $filters['estatus'] ?? 'todos', 'cliente' => $filters['cliente'] ?? '']) }}" class="inline-flex items-center justify-center rounded-md border border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700">Descargar Excel</a>
-                        <a href="{{ route('reportes.pdf', ['tipo' => $filters['tipo'] ?? 'facturas', 'fecha_inicio' => $filters['fecha_inicio'] ?? '', 'fecha_fin' => $filters['fecha_fin'] ?? '', 'estatus' => $filters['estatus'] ?? 'todos', 'cliente' => $filters['cliente'] ?? '']) }}" class="inline-flex items-center justify-center rounded-md border border-red-700 bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-red-700">Descargar PDF</a>
+                        <a :href="exportUrl(@js(route('reportes.excel')))" class="inline-flex items-center justify-center rounded-md border border-green-700 bg-green-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-green-700">Descargar Excel</a>
+                        <a :href="exportUrl(@js(route('reportes.pdf')))" class="inline-flex items-center justify-center rounded-md border border-red-700 bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-red-700">Descargar PDF</a>
                     </div>
                 </form>
             </div>

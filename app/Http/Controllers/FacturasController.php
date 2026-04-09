@@ -208,9 +208,10 @@ class FacturasController extends Controller
                 ->get();
         }
 
-        // Ventana SAT (como tu blade iKontrol lo maneja)
-        $minFecha = now()->copy()->subHours(72)->format('Y-m-d\TH:i');
-        $maxFecha = now()->format('Y-m-d\TH:i');
+        // Ventana SAT usando horario de Mexico para no depender del timezone del servidor
+        $nowMx = now('America/Mexico_City');
+        $minFecha = $nowMx->copy()->subHours(72)->format('Y-m-d\TH:i');
+        $maxFecha = $nowMx->format('Y-m-d\TH:i');
 
         // Para que el blade pinte la variable JS
         $prefill = session('factura_draft', []);

@@ -15,8 +15,19 @@ class ReportesController extends Controller
     public function index(Request $request)
     {
         [$filters, $rows, $summary] = $this->resolveReport($request);
+        $clientes = DB::table('clientes')
+            ->where('users_id', (int) auth()->id())
+            ->orderBy('razon_social')
+            ->get(['id', 'rfc', 'razon_social'])
+            ->map(fn ($c) => [
+                'id' => (int) $c->id,
+                'rfc' => (string) ($c->rfc ?? ''),
+                'razon_social' => (string) ($c->razon_social ?? ''),
+                'label' => trim(((string) ($c->razon_social ?? '')) . ' - ' . ((string) ($c->rfc ?? '')), ' -'),
+            ])
+            ->values();
 
-        return view('reportes.index', compact('filters', 'rows', 'summary'));
+        return view('reportes.index', compact('filters', 'rows', 'summary', 'clientes'));
     }
 
     public function exportExcel(Request $request)
