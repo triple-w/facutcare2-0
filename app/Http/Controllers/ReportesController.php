@@ -14,28 +14,28 @@ class ReportesController extends Controller
 {
     public function index(Request $request)
     {
-        [$filters, $rows] = $this->resolveReport($request);
+        [$filters, $rows, $summary] = $this->resolveReport($request);
 
-        return view('reportes.index', compact('filters', 'rows'));
+        return view('reportes.index', compact('filters', 'rows', 'summary'));
     }
 
     public function exportExcel(Request $request)
     {
-        [$filters, $rows] = $this->resolveReport($request);
+        [$filters, $rows, $summary] = $this->resolveReport($request);
         $filename = $this->buildFilename($filters, 'xls');
 
         return response()
-            ->view('reportes.export-excel', compact('filters', 'rows'))
+            ->view('reportes.export-excel', compact('filters', 'rows', 'summary'))
             ->header('Content-Type', 'application/vnd.ms-excel; charset=UTF-8')
             ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
     }
 
     public function exportPdf(Request $request)
     {
-        [$filters, $rows] = $this->resolveReport($request);
+        [$filters, $rows, $summary] = $this->resolveReport($request);
         $filename = $this->buildFilename($filters, 'pdf');
 
-        $pdf = Pdf::loadView('reportes.export-pdf', compact('filters', 'rows'));
+        $pdf = Pdf::loadView('reportes.export-pdf', compact('filters', 'rows', 'summary'));
 
         return $pdf->download($filename);
     }
@@ -59,14 +59,19 @@ class ReportesController extends Controller
         $filters['estatus_label'] = $this->estatusLabel($filters['estatus']);
         $filters['cliente_label'] = $filters['cliente'] !== '' ? $filters['cliente'] : 'Todos';
 
+        $from = Carbon::parse($filters['fecha_inicio'])->startOfDay();
+        $to = Carbon::parse($filters['fecha_fin'])->endOfDay();
+
         $rows = $this->buildRows(
             (int) auth()->id(),
             $filters,
-            Carbon::parse($filters['fecha_inicio'])->startOfDay(),
-            Carbon::parse($filters['fecha_fin'])->endOfDay()
+            $from,
+            $to
         );
 
-        return [$filters, $rows];
+        $summary = $this->buildSummary((int) auth()->id(), $filters, $from, $to, $rows);
+
+        return [$filters, $rows, $summary];
     }
 
     private function buildRows(int $userId, array $filters, Carbon $from, Carbon $to): Collection
@@ -88,6 +93,66 @@ class ReportesController extends Controller
             ->filter(fn ($row) => $this->matchesClientFilter($row, $filters['cliente']))
             ->filter(fn ($row) => $this->matchesDateFilter($row, $from, $to))
             ->values();
+    }
+
+    private function buildSummary(int $userId, array $filters, Carbon $from, Carbon $to, Collection $rows): array
+    {
+        $summaryFilters = $filters;
+        $summaryFilters['tipo'] = 'facturas';
+        $ingresos = $this->buildRows($userId, $summaryFilters, $from, $to)
+            ->filter(fn ($row) => strtoupper(trim((string) ($row->tipo_comprobante ?? ''))) !== 'E')
+            ->sum(fn ($row) => (float) ($row->total_calculado ?? 0));
+
+        $summaryFilters['tipo'] = 'notas_credito';
+        $egresos = $this->buildRows($userId, $summaryFilters, $from, $to)
+            ->sum(fn ($row) => (float) ($row->total_calculado ?? 0));
+
+        $summaryFilters['tipo'] = 'complementos';
+        $pagos = $this->buildRows($userId, $summaryFilters, $from, $to)
+            ->sum(fn ($row) => (float) ($row->total_calculado ?? 0));
+
+        $client = $this->resolveClientSummary($rows);
+
+        return [
+            'fecha_reporte' => now()->format('d/m/Y H:i'),
+            'cliente_rfc' => $client['rfc'],
+            'cliente_razon_social' => $client['razon_social'],
+            'totales' => [
+                'ingresos' => round((float) $ingresos, 2),
+                'egresos' => round((float) $egresos, 2),
+                'pagos' => round((float) $pagos, 2),
+            ],
+        ];
+    }
+
+    private function resolveClientSummary(Collection $rows): array
+    {
+        $clientes = $rows
+            ->map(function ($row) {
+                return [
+                    'rfc' => trim((string) ($row->rfc ?? '')),
+                    'razon_social' => trim((string) ($row->razon_social ?? '')),
+                ];
+            })
+            ->filter(fn ($cliente) => $cliente['rfc'] !== '' || $cliente['razon_social'] !== '')
+            ->unique(fn ($cliente) => strtoupper($cliente['rfc'] . '|' . $cliente['razon_social']))
+            ->values();
+
+        if ($clientes->count() === 1) {
+            return $clientes->first();
+        }
+
+        if ($clientes->count() > 1) {
+            return [
+                'rfc' => 'Varios',
+                'razon_social' => 'Varios clientes',
+            ];
+        }
+
+        return [
+            'rfc' => '—',
+            'razon_social' => 'Sin cliente identificado',
+        ];
     }
 
     private function queryFacturas(int $userId, Carbon $from, Carbon $to, ?string $tipo, string $estatus): Collection

@@ -1,8 +1,36 @@
 <x-app-layout>
     <x-slot name="header">
-        <div>
-            <h2 class="font-semibold text-xl text-gray-800 leading-tight">Reportes</h2>
-            <p class="mt-1 text-sm text-gray-500">Filtra documentos por tipo y rango de fechas, y exporta la tabla a Excel o PDF.</p>
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+                <h2 class="font-semibold text-xl text-gray-800 leading-tight">Reportes</h2>
+                <p class="mt-1 text-sm text-gray-500">Filtra documentos por tipo y rango de fechas, y exporta la tabla a Excel o PDF.</p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2 text-sm">
+                <div class="rounded-lg bg-gray-100 px-3 py-2">
+                    <div class="text-xs uppercase tracking-wide text-gray-500">RFC cliente</div>
+                    <div class="font-semibold text-gray-800">{{ $summary['cliente_rfc'] ?? '—' }}</div>
+                </div>
+                <div class="rounded-lg bg-gray-100 px-3 py-2">
+                    <div class="text-xs uppercase tracking-wide text-gray-500">Razón social</div>
+                    <div class="font-semibold text-gray-800">{{ $summary['cliente_razon_social'] ?? '—' }}</div>
+                </div>
+                <div class="rounded-lg bg-gray-100 px-3 py-2">
+                    <div class="text-xs uppercase tracking-wide text-gray-500">Fecha reporte</div>
+                    <div class="font-semibold text-gray-800">{{ $summary['fecha_reporte'] ?? '—' }}</div>
+                </div>
+                <div class="rounded-lg bg-emerald-50 px-3 py-2">
+                    <div class="text-xs uppercase tracking-wide text-emerald-700">Ingresos</div>
+                    <div class="font-semibold text-emerald-900">${{ number_format((float)($summary['totales']['ingresos'] ?? 0), 2) }}</div>
+                </div>
+                <div class="rounded-lg bg-amber-50 px-3 py-2">
+                    <div class="text-xs uppercase tracking-wide text-amber-700">Egresos</div>
+                    <div class="font-semibold text-amber-900">${{ number_format((float)($summary['totales']['egresos'] ?? 0), 2) }}</div>
+                </div>
+                <div class="rounded-lg bg-sky-50 px-3 py-2">
+                    <div class="text-xs uppercase tracking-wide text-sky-700">Pagos</div>
+                    <div class="font-semibold text-sky-900">${{ number_format((float)($summary['totales']['pagos'] ?? 0), 2) }}</div>
+                </div>
+            </div>
         </div>
     </x-slot>
 
@@ -62,6 +90,21 @@
                             <span class="rounded-full bg-gray-100 px-3 py-1 text-gray-700">Estatus: {{ $filters['estatus_label'] ?? 'Todos' }}</span>
                             <span class="rounded-full bg-gray-100 px-3 py-1 text-gray-700">Cliente: {{ $filters['cliente_label'] ?? 'Todos' }}</span>
                         </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 px-6 py-5 border-b border-gray-100 bg-gray-50/70">
+                    <div class="rounded-lg border border-emerald-100 bg-white px-4 py-3">
+                        <div class="text-xs uppercase tracking-wide text-emerald-700">Total ingresos</div>
+                        <div class="mt-1 text-2xl font-semibold text-emerald-900">${{ number_format((float)($summary['totales']['ingresos'] ?? 0), 2) }}</div>
+                    </div>
+                    <div class="rounded-lg border border-amber-100 bg-white px-4 py-3">
+                        <div class="text-xs uppercase tracking-wide text-amber-700">Total egresos</div>
+                        <div class="mt-1 text-2xl font-semibold text-amber-900">${{ number_format((float)($summary['totales']['egresos'] ?? 0), 2) }}</div>
+                    </div>
+                    <div class="rounded-lg border border-sky-100 bg-white px-4 py-3">
+                        <div class="text-xs uppercase tracking-wide text-sky-700">Total pagos</div>
+                        <div class="mt-1 text-2xl font-semibold text-sky-900">${{ number_format((float)($summary['totales']['pagos'] ?? 0), 2) }}</div>
                     </div>
                 </div>
 

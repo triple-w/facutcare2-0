@@ -15,7 +15,10 @@
 <body>
     <h1>Reporte de {{ $filters['tipo_label'] ?? str_replace('_', ' ', $filters['tipo'] ?? 'documentos') }}</h1>
     <p>Rango: {{ $filters['fecha_inicio'] ?? '' }} al {{ $filters['fecha_fin'] ?? '' }}</p>
-    <p>Estatus: {{ $filters['estatus_label'] ?? 'Todos' }} | Cliente: {{ $filters['cliente_label'] ?? 'Todos' }}</p>
+    <p>Estatus: {{ $filters['estatus_label'] ?? 'Todos' }} | Cliente filtro: {{ $filters['cliente_label'] ?? 'Todos' }}</p>
+    <p>RFC cliente: {{ $summary['cliente_rfc'] ?? '—' }} | Razón social: {{ $summary['cliente_razon_social'] ?? '—' }}</p>
+    <p>Fecha del reporte: {{ $summary['fecha_reporte'] ?? '—' }}</p>
+    <p>Totales | Ingresos: ${{ number_format((float)($summary['totales']['ingresos'] ?? 0), 2) }} | Egresos: ${{ number_format((float)($summary['totales']['egresos'] ?? 0), 2) }} | Pagos: ${{ number_format((float)($summary['totales']['pagos'] ?? 0), 2) }}</p>
 
     <table>
         <thead>
