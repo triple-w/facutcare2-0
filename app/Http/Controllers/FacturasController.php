@@ -217,6 +217,8 @@ class FacturasController extends Controller
 
         // Si tu blade usa rfcUsuarioId (id interno), manda userId por ahora
         $rfcUsuarioId = (int)($userId);
+        $metodosPago = $this->catalogoMetodosPago();
+        $formasPago = $this->catalogoFormasPago();
 
         return view('facturas.create', [
             'prefill' => $prefill,
@@ -226,6 +228,8 @@ class FacturasController extends Controller
             'rfcUsuarioId' => $rfcUsuarioId,
             'minFecha' => $minFecha,
             'maxFecha' => $maxFecha,
+            'metodosPago' => $metodosPago,
+            'formasPago' => $formasPago,
         ]);
     }
 
@@ -774,30 +778,14 @@ private function normalizarImpuestosEnPayload(array $payload): array
         ?string $pdfB64,
         ?string $acuse
     ): int {
-        // Totales server-side (igual que preview)
-        $conceptos = $payload['conceptos'] ?? [];
-        if (!is_array($conceptos)) $conceptos = [];
-
-        $subtotal = 0.0;
-        $ivaTotal = 0.0;
-        $descuentoTotal = 0.0;
-
-        foreach ($conceptos as $c) {
-            $cantidad = (float)($c['cantidad'] ?? 0);
-            $precio   = (float)($c['precio'] ?? 0);
-            $desc     = (float)($c['descuento'] ?? 0);
-
-            $importe = max(0, ($cantidad * $precio) - $desc);
-            $subtotal += $importe;
-            $descuentoTotal += $desc;
-
-            $aplicaIva = (bool)($c['aplica_iva'] ?? true);
-            $tasaIva   = (float)($c['iva_tasa'] ?? 0.16);
-            $iva       = $aplicaIva ? ($importe * $tasaIva) : 0.0;
-            $ivaTotal += $iva;
-        }
-
-        $total = max(0, ($subtotal - $descuentoTotal) + $ivaTotal);
+        $resumen = $this->calcularResumenFactura($payload);
+        $conceptos = $resumen['conceptos'];
+        $subtotal = (float)($resumen['totales']['subtotal'] ?? 0);
+        $descuentoTotal = (float)($resumen['totales']['descuento'] ?? 0);
+        $trasladosTotal = (float)($resumen['totales']['traslados'] ?? 0);
+        $retencionesTotal = (float)($resumen['totales']['retenciones'] ?? 0);
+        $total = (float)($resumen['totales']['total'] ?? 0);
+        $impuestosAgrupados = $resumen['impuestos_agrupados'] ?? [];
 
         // Fecha factura
         $fechaFactura = (string)($payload['fecha'] ?? '');
@@ -851,7 +839,7 @@ private function normalizarImpuestosEnPayload(array $payload): array
             'uso_cfdi' => (string)($payload['uso_cfdi'] ?? ''),
             'moneda' => (string)($payload['moneda'] ?? 'MXN'),
             'subtotal' => $subtotal,
-            'iva' => $ivaTotal,
+            'iva' => $trasladosTotal - $retencionesTotal,
             'total' => $total,
             'lugar_expedicion' => (string)($payload['lugar_expedicion'] ?? ''),
         ];
@@ -869,11 +857,11 @@ private function normalizarImpuestosEnPayload(array $payload): array
             $cantidad = (float)($c['cantidad'] ?? 1);
             $precio   = (float)($c['precio'] ?? 0);
             $desc     = (float)($c['descuento'] ?? 0);
-            $importe  = max(0, ($cantidad * $precio) - $desc);
-
-            $aplicaIva = (bool)($c['aplica_iva'] ?? true);
-            $tasaIva   = (float)($c['iva_tasa'] ?? 0.16);
-            $iva       = $aplicaIva ? ($importe * $tasaIva) : 0.0;
+            $importeConcepto = (float)($c['importe_concepto'] ?? round($cantidad * $precio, 2));
+            $baseImpuestos = (float)($c['base_impuestos'] ?? max($importeConcepto - $desc, 0));
+            $trasladosLinea = (float)($c['traslados'] ?? 0);
+            $retencionesLinea = (float)($c['retenciones'] ?? 0);
+            $iva = $trasladosLinea - $retencionesLinea;
 
             \DB::table('factura_detalles')->insert([
                 'users_facturas_id' => $facturaId,
@@ -881,9 +869,9 @@ private function normalizarImpuestosEnPayload(array $payload): array
                 'unidad' => (string)($c['unidad'] ?? 'SERV'),
                 'precio' => $precio,
                 'cantidad' => $cantidad, // mejor float (si tu columna es int, MySQL lo truncará)
-                'importe' => $importe,
+                'importe' => $baseImpuestos,
                 'descripcion' => (string)($c['descripcion'] ?? ''),
-                'desglosado' => $aplicaIva ? 1 : 0,
+                'desglosado' => $trasladosLinea > 0 ? 1 : 0,
                 'observaciones' => null,
                 'nuevoPrecio' => $precio,
                 'iva' => $iva,
@@ -892,14 +880,14 @@ private function normalizarImpuestosEnPayload(array $payload): array
             ]);
         }
 
-        // Impuestos globales (mínimo)
-        if ($ivaTotal > 0) {
+        // Impuestos globales
+        foreach ($impuestosAgrupados as $imp) {
             \DB::table('facturas_impuestos')->insert([
                 'users_facturas_id' => $facturaId,
-                'impuesto' => '002',
-                'tipo' => 'TRAS',
-                'tasa' => 16,
-                'monto' => $ivaTotal,
+                'impuesto' => (string)($imp['impuesto_sat'] ?? ''),
+                'tipo' => (string)($imp['tipo_db'] ?? 'TRAS'),
+                'tasa' => (int)round((float)($imp['tasa_pct'] ?? 0)),
+                'monto' => (float)($imp['importe'] ?? 0),
             ]);
         }
 
@@ -952,46 +940,8 @@ private function normalizarImpuestosEnPayload(array $payload): array
                 ->with('error', 'Cliente inválido o no pertenece al usuario.');
         }
 
-        $conceptos = $payload['conceptos'] ?? [];
-        if (!is_array($conceptos)) $conceptos = [];
-
-        $subtotal = 0.0;
-        $iva = 0.0;
-        $descuento = 0.0;
-
-        $conceptosLimpios = [];
-
-        foreach ($conceptos as $c) {
-            $cantidad = (float)($c['cantidad'] ?? 0);
-            $precio   = (float)($c['precio'] ?? 0);
-            $desc     = (float)($c['descuento'] ?? 0);
-
-            $importe = max(0, ($cantidad * $precio) - $desc);
-            $subtotal += $importe;
-            $descuento += $desc;
-
-            $aplicaIva = (bool)($c['aplica_iva'] ?? true);
-            $tasaIva   = (float)($c['iva_tasa'] ?? 0.16);
-
-            $ivaConcepto = $aplicaIva ? ($importe * $tasaIva) : 0;
-            $iva += $ivaConcepto;
-
-            $conceptosLimpios[] = [
-                'cantidad' => $cantidad,
-                'unidad' => (string)($c['unidad'] ?? 'SERV'),
-                'descripcion' => (string)($c['descripcion'] ?? ''),
-                'clave_prod_serv' => (string)($c['clave_prod_serv'] ?? ''),
-                'clave_unidad' => (string)($c['clave_unidad'] ?? ''),
-                'precio' => $precio,
-                'descuento' => $desc,
-                'importe' => $importe,
-                'aplica_iva' => $aplicaIva,
-                'iva_tasa' => $tasaIva,
-                'iva' => $ivaConcepto,
-            ];
-        }
-
-        $total = max(0, ($subtotal - $descuento) + $iva);
+        $resumen = $this->calcularResumenFactura($payload);
+        $conceptosLimpios = $resumen['conceptos'];
 
         $comprobante = [
             'rfc_activo' => (string)($payload['rfc_activo'] ?? ''),
@@ -1012,12 +962,7 @@ private function normalizarImpuestosEnPayload(array $payload): array
             'comentarios_pdf' => (string)($payload['comentarios_pdf'] ?? ''),
         ];
 
-        $totales = [
-            'subtotal' => $subtotal,
-            'descuento' => $descuento,
-            'iva' => $iva,
-            'total' => $total,
-        ];
+        $totales = $resumen['totales'];
 
         return view('facturas.preview', [
             'cliente' => $cliente,
@@ -1025,6 +970,187 @@ private function normalizarImpuestosEnPayload(array $payload): array
             'comprobante' => $comprobante,
             'totales' => $totales,
         ]);
+    }
+
+    private function calcularResumenFactura(array $payload): array
+    {
+        $conceptos = $payload['conceptos'] ?? [];
+        if (!is_array($conceptos)) {
+            $conceptos = [];
+        }
+
+        $conceptosLimpios = [];
+        $subtotal = 0.0;
+        $descuento = 0.0;
+        $traslados = 0.0;
+        $retenciones = 0.0;
+        $impuestosAgrupados = [];
+
+        foreach ($conceptos as $c) {
+            $cantidad = (float)($c['cantidad'] ?? 0);
+            $precio = (float)($c['precio'] ?? 0);
+            $desc = round((float)($c['descuento'] ?? 0), 2);
+            $importeConcepto = round($cantidad * $precio, 2);
+            $baseImpuestos = round(max($importeConcepto - $desc, 0), 2);
+
+            $subtotal = round($subtotal + $importeConcepto, 2);
+            $descuento = round($descuento + $desc, 2);
+
+            $trasladosLinea = 0.0;
+            $retencionesLinea = 0.0;
+            $impuestosLinea = [];
+
+            $impuestos = is_array($c['impuestos'] ?? null) ? $c['impuestos'] : [];
+
+            foreach ($impuestos as $imp) {
+                $factor = (string)($imp['factor'] ?? 'Tasa');
+                $tipo = strtoupper((string)($imp['tipo'] ?? 'T'));
+                $impuestoTxt = strtoupper(trim((string)($imp['impuesto'] ?? 'IVA')));
+                $tasaIn = (float)($imp['tasa'] ?? 0);
+                $tasaPct = ($tasaIn > 0 && $tasaIn < 1) ? $tasaIn * 100 : $tasaIn;
+                $importeImp = 0.0;
+
+                if (strtolower($factor) !== 'exento') {
+                    $tasa = $tasaPct > 1 ? $tasaPct / 100 : $tasaPct;
+                    $importeImp = round($baseImpuestos * $tasa, 2);
+                }
+
+                if ($tipo === 'R') {
+                    $retencionesLinea = round($retencionesLinea + $importeImp, 2);
+                } else {
+                    $trasladosLinea = round($trasladosLinea + $importeImp, 2);
+                }
+
+                $impuestoSat = $this->mapImpuestoSat($impuestoTxt);
+                $claveAgrupada = implode('|', [$tipo, $impuestoSat, strtolower($factor), number_format($tasaPct, 4, '.', '')]);
+                if (!isset($impuestosAgrupados[$claveAgrupada])) {
+                    $impuestosAgrupados[$claveAgrupada] = [
+                        'tipo' => $tipo,
+                        'tipo_db' => $tipo === 'R' ? 'RET' : 'TRAS',
+                        'impuesto_sat' => $impuestoSat,
+                        'factor' => $factor,
+                        'tasa_pct' => $tasaPct,
+                        'importe' => 0.0,
+                    ];
+                }
+                $impuestosAgrupados[$claveAgrupada]['importe'] = round($impuestosAgrupados[$claveAgrupada]['importe'] + $importeImp, 2);
+
+                $impuestosLinea[] = [
+                    'tipo' => $tipo,
+                    'impuesto' => $impuestoTxt,
+                    'factor' => $factor,
+                    'tasa_pct' => $tasaPct,
+                    'importe' => $importeImp,
+                    'descripcion' => trim(($tipo === 'R' ? 'Ret. ' : 'Tras. ') . $impuestoTxt . (strtolower($factor) === 'exento' ? ' Exento' : ' ' . number_format($tasaPct, 2) . '%')),
+                ];
+            }
+
+            if (!count($impuestosLinea) && !empty($c['aplica_iva'])) {
+                $tasaIva = (float)($c['iva_tasa'] ?? 0.16);
+                $tasaPct = $tasaIva > 0 && $tasaIva < 1 ? $tasaIva * 100 : $tasaIva;
+                $importeImp = round($baseImpuestos * ($tasaPct > 1 ? $tasaPct / 100 : $tasaPct), 2);
+                $trasladosLinea = round($trasladosLinea + $importeImp, 2);
+                $claveAgrupada = implode('|', ['T', '002', 'tasa', number_format($tasaPct, 4, '.', '')]);
+                if (!isset($impuestosAgrupados[$claveAgrupada])) {
+                    $impuestosAgrupados[$claveAgrupada] = [
+                        'tipo' => 'T',
+                        'tipo_db' => 'TRAS',
+                        'impuesto_sat' => '002',
+                        'factor' => 'Tasa',
+                        'tasa_pct' => $tasaPct,
+                        'importe' => 0.0,
+                    ];
+                }
+                $impuestosAgrupados[$claveAgrupada]['importe'] = round($impuestosAgrupados[$claveAgrupada]['importe'] + $importeImp, 2);
+                $impuestosLinea[] = [
+                    'tipo' => 'T',
+                    'impuesto' => 'IVA',
+                    'factor' => 'Tasa',
+                    'tasa_pct' => $tasaPct,
+                    'importe' => $importeImp,
+                    'descripcion' => 'Tras. IVA ' . number_format($tasaPct, 2) . '%',
+                ];
+            }
+
+            $traslados = round($traslados + $trasladosLinea, 2);
+            $retenciones = round($retenciones + $retencionesLinea, 2);
+
+            $conceptosLimpios[] = [
+                'cantidad' => $cantidad,
+                'unidad' => (string)($c['unidad'] ?? 'SERV'),
+                'descripcion' => (string)($c['descripcion'] ?? ''),
+                'clave_prod_serv' => (string)($c['clave_prod_serv'] ?? ''),
+                'clave_unidad' => (string)($c['clave_unidad'] ?? ''),
+                'precio' => $precio,
+                'descuento' => $desc,
+                'importe_concepto' => $importeConcepto,
+                'base_impuestos' => $baseImpuestos,
+                'traslados' => $trasladosLinea,
+                'retenciones' => $retencionesLinea,
+                'importe_neto' => round($baseImpuestos + $trasladosLinea - $retencionesLinea, 2),
+                'impuestos' => $impuestosLinea,
+                'resumen_impuestos' => implode(', ', array_column($impuestosLinea, 'descripcion')),
+            ];
+        }
+
+        $base = round(max($subtotal - $descuento, 0), 2);
+        $retLocal5 = !empty($payload['impuestos_locales']['ret_5_millar']) ? round($base * 0.005, 2) : 0.0;
+        $retLocalCed = !empty($payload['impuestos_locales']['ret_cedular_2']) ? round($base * 0.02, 2) : 0.0;
+        $retLocales = round($retLocal5 + $retLocalCed, 2);
+        $total = round(max($base + $traslados - $retenciones - $retLocales, 0), 2);
+
+        return [
+            'conceptos' => $conceptosLimpios,
+            'impuestos_agrupados' => array_values($impuestosAgrupados),
+            'totales' => [
+                'subtotal' => $subtotal,
+                'descuento' => $descuento,
+                'base' => $base,
+                'traslados' => $traslados,
+                'retenciones' => $retenciones,
+                'ret_local_5_millar' => $retLocal5,
+                'ret_local_cedular' => $retLocalCed,
+                'ret_local_total' => $retLocales,
+                'impuestos_netos' => round($traslados - $retenciones, 2),
+                'total' => $total,
+            ],
+        ];
+    }
+
+    private function catalogoMetodosPago(): array
+    {
+        return [
+            ['clave' => 'PUE', 'descripcion' => 'Pago en una sola exhibición'],
+            ['clave' => 'PPD', 'descripcion' => 'Pago en parcialidades o diferido'],
+        ];
+    }
+
+    private function catalogoFormasPago(): array
+    {
+        return [
+            ['clave' => '01', 'descripcion' => 'Efectivo'],
+            ['clave' => '02', 'descripcion' => 'Cheque nominativo'],
+            ['clave' => '03', 'descripcion' => 'Transferencia electrónica de fondos'],
+            ['clave' => '04', 'descripcion' => 'Tarjeta de crédito'],
+            ['clave' => '05', 'descripcion' => 'Monedero electrónico'],
+            ['clave' => '06', 'descripcion' => 'Dinero electrónico'],
+            ['clave' => '08', 'descripcion' => 'Vales de despensa'],
+            ['clave' => '12', 'descripcion' => 'Dación en pago'],
+            ['clave' => '13', 'descripcion' => 'Pago por subrogación'],
+            ['clave' => '14', 'descripcion' => 'Pago por consignación'],
+            ['clave' => '15', 'descripcion' => 'Condonación'],
+            ['clave' => '17', 'descripcion' => 'Compensación'],
+            ['clave' => '23', 'descripcion' => 'Novación'],
+            ['clave' => '24', 'descripcion' => 'Confusión'],
+            ['clave' => '25', 'descripcion' => 'Remisión de deuda'],
+            ['clave' => '26', 'descripcion' => 'Prescripción o caducidad'],
+            ['clave' => '27', 'descripcion' => 'A satisfacción del acreedor'],
+            ['clave' => '28', 'descripcion' => 'Tarjeta de débito'],
+            ['clave' => '29', 'descripcion' => 'Tarjeta de servicios'],
+            ['clave' => '30', 'descripcion' => 'Aplicación de anticipos'],
+            ['clave' => '31', 'descripcion' => 'Intermediario pagos'],
+            ['clave' => '99', 'descripcion' => 'Por definir'],
+        ];
     }
 
     private function resolveUsersDocumentoPathFromRow(object $doc): string
