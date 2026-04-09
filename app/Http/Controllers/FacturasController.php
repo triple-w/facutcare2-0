@@ -943,6 +943,8 @@ private function normalizarImpuestosEnPayload(array $payload): array
         $resumen = $this->calcularResumenFactura($payload);
         $conceptosLimpios = $resumen['conceptos'];
 
+        $totales = $resumen['totales'];
+
         $comprobante = [
             'rfc_activo' => (string)($payload['rfc_activo'] ?? ''),
             'folio_id' => (int)($payload['folio_id'] ?? 0),
@@ -958,11 +960,9 @@ private function normalizarImpuestosEnPayload(array $payload): array
             'exportacion' => (string)($payload['exportacion'] ?? '01'),
             'moneda' => (string)($payload['moneda'] ?? 'MXN'),
 
-            'descuento' => $descuento,
+            'descuento' => (float)($totales['descuento'] ?? 0),
             'comentarios_pdf' => (string)($payload['comentarios_pdf'] ?? ''),
         ];
-
-        $totales = $resumen['totales'];
 
         return view('facturas.preview', [
             'cliente' => $cliente,
