@@ -1749,7 +1749,6 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
                 $tras = $dom->createElementNS($cfdiNS, 'cfdi:Traslados');
                 foreach ($trasAgg as $row) {
                     $t = $dom->createElementNS($cfdiNS, 'cfdi:Traslado');
-                    $t->setAttribute('Base', $this->fmt($row['base2'], 2));
                     $t->setAttribute('Impuesto', $row['impuesto']);
                     $t->setAttribute('TipoFactor', $row['tipo_factor']);
 
