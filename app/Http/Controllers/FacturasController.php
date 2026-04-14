@@ -1617,8 +1617,8 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
                         default => '002',
                     };
 
-                    // tu UI manda 16 (porcentaje). Lo convertimos a 0.16 si > 1
-                    $tasa = ($tasaIn > 1) ? ($tasaIn / 100) : $tasaIn;
+                    // tu UI manda porcentaje entero: 16 => 0.16, 1 => 0.01
+                    $tasa = ($tasaIn >= 1) ? ($tasaIn / 100) : $tasaIn;
 
                     if ($tipo === 'R') {
                         $retenciones[] = ['impuesto'=>$impCode, 'importe'=>null, 'factor'=>$factor, 'tasa'=>$tasa];
@@ -1652,11 +1652,16 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
                         if ($impCode === '') continue;
 
                         // Retención = base * tasa (redondeo por concepto)
+                        $factor = (string)($r['factor'] ?? 'Tasa');
                         $tasa = (float)($r['tasa'] ?? 0);
+                        $tasa6 = $this->fmt($r6($tasa), 6);
                         $importeRet2 = $r2($baseImp * $tasa);
 
                         $ret = $dom->createElementNS($cfdiNS, 'cfdi:Retencion');
+                        $ret->setAttribute('Base', $this->fmt($baseImp, 2));
                         $ret->setAttribute('Impuesto', $impCode);
+                        $ret->setAttribute('TipoFactor', $factor);
+                        $ret->setAttribute('TasaOCuota', $tasa6);
                         $ret->setAttribute('Importe', $this->fmt($importeRet2, 2));
                         $retNode->appendChild($ret);
 
