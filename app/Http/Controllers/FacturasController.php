@@ -1709,8 +1709,8 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
             $concepto->setAttribute('ObjetoImp', $tieneImpuestos ? '02' : '01');
 
             if ($impNode) {
-                if ($retNode && $retNode->childNodes->length)  $impNode->appendChild($retNode);
                 if ($trasNode && $trasNode->childNodes->length) $impNode->appendChild($trasNode);
+                if ($retNode && $retNode->childNodes->length) $impNode->appendChild($retNode);
                 if ($impNode->childNodes->length) $concepto->appendChild($impNode);
             }
 
@@ -1749,6 +1749,7 @@ private function adjuntarCertificadoAlXml(string $xml, string $certB64, string $
                 $tras = $dom->createElementNS($cfdiNS, 'cfdi:Traslados');
                 foreach ($trasAgg as $row) {
                     $t = $dom->createElementNS($cfdiNS, 'cfdi:Traslado');
+                    $t->setAttribute('Base', $this->fmt($row['base2'], 2));
                     $t->setAttribute('Impuesto', $row['impuesto']);
                     $t->setAttribute('TipoFactor', $row['tipo_factor']);
 
