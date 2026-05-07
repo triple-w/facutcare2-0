@@ -206,7 +206,8 @@ class ComplementosController extends Controller
                 foreach ($p['impuestos'] as $k => $it) {
                     if (!is_array($it)) $it = [];
 
-                    $tipo   = (string)($it['tipo'] ?? 'T'); // T o R
+                    $tipoRaw = strtoupper(trim((string)($it['tipo'] ?? 'T')));
+                    $tipo   = in_array($tipoRaw, ['R', 'RET', 'RETENCION', 'RETENCIÓN'], true) ? 'R' : 'T'; // T o R
                     $factor = (string)($it['factor'] ?? 'Tasa');
 
                     $base = isset($it['base']) ? (float)$it['base'] : 0.0;
@@ -242,7 +243,7 @@ class ComplementosController extends Controller
         $retenciones = round($retenciones, 2);
 
         $total = round($subtotal, 2);
-        $subtotalNeto = round($total - $traslados - $retenciones, 2);
+        $subtotalNeto = round($total - $traslados + $retenciones, 2);
 
         $totales = [
             'subtotal'    => $subtotalNeto,

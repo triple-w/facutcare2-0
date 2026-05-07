@@ -511,7 +511,7 @@
                 </td>
 
                 <td class="px-3 py-2 text-right">
-                  <div class="font-semibold" x-text="money(it.importe)"></div>
+                  <div class="font-semibold" :class="normalizeTipoImpuesto(it.tipo) === 'R' ? 'text-red-600 dark:text-red-400' : ''" x-text="moneySigned(it.importe, it.tipo)"></div>
                 </td>
 
                 <td class="px-3 py-2 text-right">
@@ -621,6 +621,15 @@
     money(n){
       n = Number(n || 0);
       return n.toLocaleString('es-MX', { style:'currency', currency:'MXN' });
+    },
+    normalizeTipoImpuesto(tipo){
+      const t = String(tipo ?? '').trim().toUpperCase();
+      if (t === 'R' || t === 'RET' || t === 'RETENCION' || t === 'RETENCIÓN') return 'R';
+      return 'T';
+    },
+    moneySigned(n, tipo = 'T'){
+      const amount = this.money(Math.abs(Number(n || 0)));
+      return `${this.normalizeTipoImpuesto(tipo) === 'R' ? '-' : '+'}${amount}`;
     },
 
     // ===== Init =====
@@ -858,7 +867,7 @@
       const arr = Array.isArray(p.impuestos) ? p.impuestos : [];
       this.impuestosEdit = arr.map(x => ({
         uid: x.uid || this.uid(),
-        tipo: x.tipo || 'T',
+        tipo: this.normalizeTipoImpuesto(x.tipo),
         impuesto: x.impuesto || 'IVA',
         factor: x.factor || 'Tasa',
         tasa: Number(x.tasa ?? 16),
@@ -925,7 +934,7 @@
 
       p.impuestos = (this.impuestosEdit || []).map(it => ({
         uid: it.uid || this.uid(),
-        tipo: it.tipo || 'T',
+        tipo: this.normalizeTipoImpuesto(it.tipo),
         impuesto: it.impuesto || 'IVA',
         factor: it.factor || 'Tasa',
         tasa: Number(it.tasa || 0),
@@ -945,10 +954,11 @@
       const arr = Array.isArray(p.impuestos) ? p.impuestos : [];
       if (!arr.length) return 'Sin impuestos';
       return arr.map(i => {
-        const t = (i.tipo === 'R') ? 'Ret' : 'Tras';
+        const tipo = this.normalizeTipoImpuesto(i.tipo);
+        const t = (tipo === 'R') ? 'Ret' : 'Tras';
         const imp = i.impuesto || 'IVA';
         const tasa = (i.factor === 'Exento') ? 'Exento' : `${Number(i.tasa||0).toFixed(2)}%`;
-        const impMon = this.money(i.importe || 0);
+        const impMon = this.moneySigned(i.importe || 0, tipo);
         return `${t} ${imp} ${tasa} (${impMon})`;
       }).join(', ');
     },
@@ -973,7 +983,7 @@
 
           for (const it of p.impuestos) {
             const imp = Number(it.importe || 0);
-            if ((it.tipo || 'T') === 'R') ret += imp;
+            if (this.normalizeTipoImpuesto(it.tipo) === 'R') ret += imp;
             else tras += imp;
           }
         }
@@ -982,7 +992,7 @@
       total = Math.round(total * 100) / 100;
       tras  = Math.round(tras * 100) / 100;
       ret   = Math.round(ret * 100) / 100;
-      const subtotal = Math.round((total - tras - ret) * 100) / 100;
+      const subtotal = Math.round((total - tras + ret) * 100) / 100;
 
       this.totales = {
         subtotal,
