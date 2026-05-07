@@ -174,6 +174,7 @@ class ComplementosController extends Controller
         // Recalcula impuestos y totales en backend
         // =========================
         $subtotal = 0.0;
+        $total = 0.0;
         $traslados = 0.0;
         $retenciones = 0.0;
 
@@ -199,10 +200,11 @@ class ComplementosController extends Controller
             $p['objeto_imp'] = (bool)($p['objeto_imp'] ?? false);
             $p['impuestos']  = is_array($p['impuestos'] ?? null) ? $p['impuestos'] : [];
 
-            $subtotal += $montoPago;
+            $total += $montoPago;
 
             // si hay impuestos, recalcular importes por seguridad
             if ($p['objeto_imp'] && is_array($p['impuestos'])) {
+                $basesPago = [];
                 foreach ($p['impuestos'] as $k => $it) {
                     if (!is_array($it)) $it = [];
 
@@ -227,12 +229,16 @@ class ComplementosController extends Controller
                     $it['base']   = round($base, 2);
                     $it['tasa']   = round($tasa, 6);
                     $it['importe'] = round($importe, 2);
+                    if ($it['base'] > 0) $basesPago[] = $it['base'];
 
                     if (strtoupper($tipo) === 'R') $retenciones += $importe;
                     else $traslados += $importe;
 
                     $p['impuestos'][$k] = $it;
                 }
+                $subtotal += !empty($basesPago) ? max($basesPago) : $montoPago;
+            } else {
+                $subtotal += $montoPago;
             }
 
             $pagos[$i] = $p;
@@ -241,12 +247,10 @@ class ComplementosController extends Controller
         $subtotal = round($subtotal, 2);
         $traslados = round($traslados, 2);
         $retenciones = round($retenciones, 2);
-
-        $total = round($subtotal, 2);
-        $subtotalNeto = round($total - $traslados + $retenciones, 2);
+        $total = round($total, 2);
 
         $totales = [
-            'subtotal'    => $subtotalNeto,
+            'subtotal'    => $subtotal,
             'traslados'   => $traslados,
             'retenciones' => $retenciones,
             'total'       => $total,

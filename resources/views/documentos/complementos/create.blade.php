@@ -631,6 +631,21 @@
       const amount = this.money(Math.abs(Number(n || 0)));
       return `${this.normalizeTipoImpuesto(tipo) === 'R' ? '-' : '+'}${amount}`;
     },
+    basePago(p){
+      if (!p || !p.objeto_imp || !Array.isArray(p.impuestos) || !p.impuestos.length) {
+        return Math.round(Number(p?.monto_pago || 0) * 100) / 100;
+      }
+
+      const bases = p.impuestos
+        .map(it => Math.round(Number(it?.base || 0) * 100) / 100)
+        .filter(base => base > 0);
+
+      if (!bases.length) {
+        return Math.round(Number(p.monto_pago || 0) * 100) / 100;
+      }
+
+      return Math.max(...bases);
+    },
 
     // ===== Init =====
     init(){
@@ -965,7 +980,7 @@
 
     // ===== Totales =====
     recalcular(){
-      let total = 0, tras = 0, ret = 0;
+      let total = 0, tras = 0, ret = 0, subtotal = 0;
 
       for (const p of (this.form.pagos || [])) {
         const saldoAnt = Number(p.saldo_anterior || 0);
@@ -980,19 +995,22 @@
         if (p.objeto_imp && Array.isArray(p.impuestos)) {
           // ✅ recalcula importes sin depender del modal
           this.recalcImpuestosRow(p);
+          subtotal += this.basePago(p);
 
           for (const it of p.impuestos) {
             const imp = Number(it.importe || 0);
             if (this.normalizeTipoImpuesto(it.tipo) === 'R') ret += imp;
             else tras += imp;
           }
+        } else {
+          subtotal += pagado;
         }
       }
 
       total = Math.round(total * 100) / 100;
+      subtotal = Math.round(subtotal * 100) / 100;
       tras  = Math.round(tras * 100) / 100;
       ret   = Math.round(ret * 100) / 100;
-      const subtotal = Math.round((total - tras + ret) * 100) / 100;
 
       this.totales = {
         subtotal,
