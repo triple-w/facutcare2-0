@@ -1117,7 +1117,12 @@ class ComplementosController extends Controller
                     if ($tipo === 'R') {
                         if (!$retDR) $retDR = $dom->createElement('pago20:RetencionesDR');
                         $n = $dom->createElement('pago20:RetencionDR');
+                        $n->setAttribute('BaseDR', $this->fmtMoney($base));
                         $n->setAttribute('ImpuestoDR', $impCode);
+                        $n->setAttribute('TipoFactorDR', $tipoFactor);
+                        if ($tipoFactor !== 'Exento') {
+                            $n->setAttribute('TasaOCuotaDR', $tasaCuota);
+                        }
                         $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
                         $retDR->appendChild($n);
                     } else {
@@ -1837,7 +1842,12 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 if (!$retDR) $retDR = $dom->createElementNS($pagoNs, 'pago20:RetencionesDR');
 
                 $n = $dom->createElementNS($pagoNs, 'pago20:RetencionDR');
+                $n->setAttribute('BaseDR', $this->fmtMoney($base));
                 $n->setAttribute('ImpuestoDR', $impCode);
+                $n->setAttribute('TipoFactorDR', $tipoFactor);
+                if (!$isExento) {
+                    $n->setAttribute('TasaOCuotaDR', $this->fmtRateFromPercent($tasaPct));
+                }
                 $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
 
                 $retDR->appendChild($n);
@@ -2246,7 +2256,12 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 if (!$retP)  $retP  = $dom->createElementNS($pagoNs, 'pago20:RetencionesP');
 
                 $rdr = $dom->createElementNS($pagoNs, 'pago20:RetencionDR');
+                $rdr->setAttribute('BaseDR', number_format($base, 2, '.', ''));
                 $rdr->setAttribute('ImpuestoDR', $impCode);
+                $rdr->setAttribute('TipoFactorDR', $isExento ? 'Exento' : 'Tasa');
+                if (!$isExento) {
+                    $rdr->setAttribute('TasaOCuotaDR', number_format(($tasaPct / 100), 6, '.', ''));
+                }
                 $rdr->setAttribute('ImporteDR', number_format($importe, 2, '.', ''));
                 $retDR->appendChild($rdr);
 
