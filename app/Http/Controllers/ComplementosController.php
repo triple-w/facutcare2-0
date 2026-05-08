@@ -1117,13 +1117,8 @@ class ComplementosController extends Controller
                     if ($tipo === 'R') {
                         if (!$retDR) $retDR = $dom->createElement('pago20:RetencionesDR');
                         $n = $dom->createElement('pago20:RetencionDR');
-                        $n->setAttribute('BaseDR', $this->fmtMoney($base));
                         $n->setAttribute('ImpuestoDR', $impCode);
-                        $n->setAttribute('TipoFactorDR', $tipoFactor);
-                        if ($tipoFactor !== 'Exento') {
-                            $n->setAttribute('TasaOCuotaDR', $tasaCuota);
-                            $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
-                        }
+                        $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
                         $retDR->appendChild($n);
                     } else {
                         if (!$trasDR) $trasDR = $dom->createElement('pago20:TrasladosDR');
@@ -1156,13 +1151,8 @@ class ComplementosController extends Controller
                 $retsP = $dom->createElement('pago20:RetencionesP');
                 foreach ($impPSums['retenciones'] as $row) {
                     $n = $dom->createElement('pago20:RetencionP');
-                    $n->setAttribute('BaseP', $this->fmtMoney($row['base']));
                     $n->setAttribute('ImpuestoP', $row['impuesto']);
-                    $n->setAttribute('TipoFactorP', $row['factor']);
-                    if ($row['factor'] !== 'Exento') {
-                        $n->setAttribute('TasaOCuotaP', $row['tasa']);
-                        $n->setAttribute('ImporteP', $this->fmtMoney($row['importe']));
-                    }
+                    $n->setAttribute('ImporteP', $this->fmtMoney($row['importe']));
                     $retsP->appendChild($n);
                 }
                 $impP->appendChild($retsP);
@@ -1847,14 +1837,8 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 if (!$retDR) $retDR = $dom->createElementNS($pagoNs, 'pago20:RetencionesDR');
 
                 $n = $dom->createElementNS($pagoNs, 'pago20:RetencionDR');
-                $n->setAttribute('BaseDR', $this->fmtMoney($base));
                 $n->setAttribute('ImpuestoDR', $impCode);
-                $n->setAttribute('TipoFactorDR', $tipoFactor);
-
-                if (!$isExento) {
-                    $n->setAttribute('TasaOCuotaDR', $this->fmtRateFromPercent($tasaPct)); // 16 => 0.160000
-                    $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
-                }
+                $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
 
                 $retDR->appendChild($n);
             } else {
@@ -1874,8 +1858,8 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             }
         }
 
-        if ($trasDR) $impDR->appendChild($trasDR);
         if ($retDR)  $impDR->appendChild($retDR);
+        if ($trasDR) $impDR->appendChild($trasDR);
 
         $docRel->appendChild($impDR);
     }
@@ -2193,13 +2177,8 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 $retsP = $dom->createElementNS($pagoNs, 'pago20:RetencionesP');
                 foreach ($impPSums['retenciones'] as $row) {
                     $n = $dom->createElementNS($pagoNs, 'pago20:RetencionP');
-                    $n->setAttribute('BaseP', $this->fmtMoney((float)($row['base'] ?? 0)));
                     $n->setAttribute('ImpuestoP', (string)($row['impuesto'] ?? '002'));
-                    $n->setAttribute('TipoFactorP', (string)($row['factor'] ?? 'Tasa'));
-                    if ((string)($row['factor'] ?? 'Tasa') !== 'Exento') {
-                        $n->setAttribute('TasaOCuotaP', (string)($row['tasa'] ?? '0.000000'));
-                        $n->setAttribute('ImporteP', $this->fmtMoney((float)($row['importe'] ?? 0)));
-                    }
+                    $n->setAttribute('ImporteP', $this->fmtMoney((float)($row['importe'] ?? 0)));
                     $retsP->appendChild($n);
                 }
                 $impP->appendChild($retsP);
@@ -2305,14 +2284,14 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         }
 
         if ($trasDR || $retDR) {
-            if ($trasDR) $impDR->appendChild($trasDR);
             if ($retDR)  $impDR->appendChild($retDR);
+            if ($trasDR) $impDR->appendChild($trasDR);
             $docRel->appendChild($impDR);
         }
 
         if ($trasP || $retP) {
-            if ($trasP) $impP->appendChild($trasP);
             if ($retP)  $impP->appendChild($retP);
+            if ($trasP) $impP->appendChild($trasP);
             $pagoNode->appendChild($impP);
         }
     }
