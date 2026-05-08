@@ -128,7 +128,11 @@ class ComplementosController extends Controller
 
         // guarda borrador para volver a create con info
         session(['complemento_draft' => $payload]);
+        return $this->renderPreviewFromPayload($payload);
+    }
 
+    private function renderPreviewFromPayload(array $payload, ?string $flashError = null)
+    {
         $userId = auth()->id();
         $clienteId = (int)($payload['cliente_id'] ?? 0);
 
@@ -145,34 +149,22 @@ class ComplementosController extends Controller
             return redirect()->route('complementos.create')->with('error', 'Cliente inválido.');
         }
 
-        // =========================
-        // Normaliza datos nuevos
-        // =========================
         $payload['serie_pago'] = (string)($payload['serie_pago'] ?? '');
         $payload['folio_pago'] = (int)($payload['folio_pago'] ?? 0);
-
-        // Compatibilidad: si falta una fecha, toma la otra.
         $payload['fecha_documento'] = (string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? ''));
-        $payload['fecha_pago']      = (string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? ''));
-
-        $payload['forma_pago_p']   = (string)($payload['forma_pago_p'] ?? '03');
-        $payload['moneda_p']       = (string)($payload['moneda_p'] ?? 'MXN');
-        $payload['tipo_cambio_p']  = (float)($payload['tipo_cambio_p'] ?? 1);
-
-        // bancarios opcionales
-        $payload['num_operacion']       = (string)($payload['num_operacion'] ?? '');
-        $payload['rfc_banco_emisor']    = (string)($payload['rfc_banco_emisor'] ?? '');
-        $payload['cuenta_ordenante']    = (string)($payload['cuenta_ordenante'] ?? '');
-        $payload['banco_receptor']      = (string)($payload['banco_receptor'] ?? '');
+        $payload['fecha_pago'] = (string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? ''));
+        $payload['forma_pago_p'] = (string)($payload['forma_pago_p'] ?? '03');
+        $payload['moneda_p'] = (string)($payload['moneda_p'] ?? 'MXN');
+        $payload['tipo_cambio_p'] = (float)($payload['tipo_cambio_p'] ?? 1);
+        $payload['num_operacion'] = (string)($payload['num_operacion'] ?? '');
+        $payload['rfc_banco_emisor'] = (string)($payload['rfc_banco_emisor'] ?? '');
+        $payload['cuenta_ordenante'] = (string)($payload['cuenta_ordenante'] ?? '');
+        $payload['banco_receptor'] = (string)($payload['banco_receptor'] ?? '');
         $payload['cuenta_beneficiaria'] = (string)($payload['cuenta_beneficiaria'] ?? '');
 
-        // doctos
         $pagos = $payload['pagos'] ?? [];
         if (!is_array($pagos)) $pagos = [];
 
-        // =========================
-        // Recalcula impuestos y totales en backend
-        // =========================
         $subtotal = 0.0;
         $total = 0.0;
         $traslados = 0.0;
@@ -182,56 +174,45 @@ class ComplementosController extends Controller
             if (!is_array($p)) $p = [];
 
             $saldoAnterior = (float)($p['saldo_anterior'] ?? 0);
-            $montoPago     = (float)($p['monto_pago'] ?? 0);
-            $montoPago     = max($montoPago, 0);
+            $montoPago = max((float)($p['monto_pago'] ?? 0), 0);
             $saldoInsoluto = array_key_exists('saldo_insoluto', $p)
                 ? (float)($p['saldo_insoluto'] ?? 0)
                 : ($saldoAnterior - $montoPago);
             $saldoInsoluto = max(round($saldoInsoluto, 2), 0);
 
-            $p['saldo_anterior']  = round($saldoAnterior, 2);
-            $p['monto_pago']      = round($montoPago, 2);
-            $p['saldo_insoluto']  = $saldoInsoluto;
-
+            $p['saldo_anterior'] = round($saldoAnterior, 2);
+            $p['monto_pago'] = round($montoPago, 2);
+            $p['saldo_insoluto'] = $saldoInsoluto;
             $p['num_parcialidad'] = (int)($p['num_parcialidad'] ?? 1);
-            $p['moneda_dr']       = (string)($p['moneda_dr'] ?? 'MXN');
-            $p['metodo_pago_dr']  = (string)($p['metodo_pago_dr'] ?? 'PPD');
-
+            $p['moneda_dr'] = (string)($p['moneda_dr'] ?? 'MXN');
+            $p['metodo_pago_dr'] = (string)($p['metodo_pago_dr'] ?? 'PPD');
             $p['objeto_imp'] = (bool)($p['objeto_imp'] ?? false);
-            $p['impuestos']  = is_array($p['impuestos'] ?? null) ? $p['impuestos'] : [];
+            $p['impuestos'] = is_array($p['impuestos'] ?? null) ? $p['impuestos'] : [];
 
             $total += $montoPago;
 
-            // si hay impuestos, recalcular importes por seguridad
             if ($p['objeto_imp'] && is_array($p['impuestos'])) {
                 $basesPago = [];
                 foreach ($p['impuestos'] as $k => $it) {
                     if (!is_array($it)) $it = [];
 
                     $tipoRaw = strtoupper(trim((string)($it['tipo'] ?? 'T')));
-                    $tipo   = in_array($tipoRaw, ['R', 'RET', 'RETENCION', 'RETENCIÓN'], true) ? 'R' : 'T'; // T o R
+                    $tipo = in_array($tipoRaw, ['R', 'RET', 'RETENCION', 'RETENCIÓN'], true) ? 'R' : 'T';
                     $factor = (string)($it['factor'] ?? 'Tasa');
-
                     $base = isset($it['base']) ? (float)$it['base'] : 0.0;
                     if ($base <= 0) $base = $montoPago;
 
-                    $tasa = (float)($it['tasa'] ?? 0); // porcentaje (16)
-                    $importe = 0.0;
+                    $tasa = (float)($it['tasa'] ?? 0);
+                    $importe = strtolower($factor) === 'exento' ? 0.0 : round($base * ($tasa / 100), 2);
 
-                    if (strtolower($factor) === 'exento') {
-                        $importe = 0.0;
-                    } else {
-                        $importe = round($base * ($tasa / 100), 2);
-                    }
-
-                    $it['tipo']   = $tipo;
+                    $it['tipo'] = $tipo;
                     $it['factor'] = $factor;
-                    $it['base']   = round($base, 2);
-                    $it['tasa']   = round($tasa, 6);
+                    $it['base'] = round($base, 2);
+                    $it['tasa'] = round($tasa, 6);
                     $it['importe'] = round($importe, 2);
                     if ($it['base'] > 0) $basesPago[] = $it['base'];
 
-                    if (strtoupper($tipo) === 'R') $retenciones += $importe;
+                    if ($tipo === 'R') $retenciones += $importe;
                     else $traslados += $importe;
 
                     $p['impuestos'][$k] = $it;
@@ -244,20 +225,18 @@ class ComplementosController extends Controller
             $pagos[$i] = $p;
         }
 
-        $subtotal = round($subtotal, 2);
-        $traslados = round($traslados, 2);
-        $retenciones = round($retenciones, 2);
-        $total = round($total, 2);
+        $payload['pagos'] = $pagos;
 
         $totales = [
-            'subtotal'    => $subtotal,
-            'traslados'   => $traslados,
-            'retenciones' => $retenciones,
-            'total'       => $total,
+            'subtotal' => round($subtotal, 2),
+            'traslados' => round($traslados, 2),
+            'retenciones' => round($retenciones, 2),
+            'total' => round($total, 2),
         ];
 
-        // reinyecta pagos normalizados
-        $payload['pagos'] = $pagos;
+        if ($flashError !== null) {
+            session()->flash('error', $flashError);
+        }
 
         return view('documentos.complementos.preview', compact('payload', 'cliente', 'totales'));
     }
@@ -1706,7 +1685,8 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            return back()->with('error', 'Error al timbrar complemento: ' . $e->getMessage());
+            session(['complemento_draft' => $payload]);
+            return $this->renderPreviewFromPayload($payload, 'Error al timbrar complemento: ' . $e->getMessage());
         }
     }
 
