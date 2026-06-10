@@ -646,6 +646,19 @@
 
       return Math.max(...bases);
     },
+    defaultTaxBase(p, it = {}){
+      const monto = Math.max(Number(p?.monto_pago || 0), 0);
+      const tipo = this.normalizeTipoImpuesto(it.tipo || 'T');
+      const impuesto = String(it.impuesto || 'IVA').toUpperCase();
+      const factor = String(it.factor || 'Tasa');
+      const tasa = Number(it.tasa ?? 16);
+
+      if (tipo === 'T' && impuesto === 'IVA' && factor === 'Tasa' && Math.abs(tasa - 16) < 0.000001) {
+        return Math.round((monto / 1.16) * 100) / 100;
+      }
+
+      return Math.round(monto * 100) / 100;
+    },
 
     // ===== Init =====
     init(){
@@ -831,7 +844,7 @@
 
       for (const it of p.impuestos) {
         // Si base no está definida (o 0), la amarramos al monto pago actual
-        if (it.base == null || Number(it.base) === 0) it.base = Number(p.monto_pago || 0);
+        if (it.base == null || Number(it.base) === 0) it.base = this.defaultTaxBase(p, it);
 
         const base = Number(it.base || 0);
 
@@ -860,7 +873,7 @@
             impuesto: 'IVA',
             factor: 'Tasa',
             tasa: 16,
-            base: Number(p.monto_pago || 0),
+            base: this.defaultTaxBase(p, { tipo:'T', impuesto:'IVA', factor:'Tasa', tasa:16 }),
             importe: 0,
           }];
         }
@@ -886,7 +899,7 @@
         impuesto: x.impuesto || 'IVA',
         factor: x.factor || 'Tasa',
         tasa: Number(x.tasa ?? 16),
-        base: Number(x.base ?? (p.monto_pago || 0)),
+        base: Number(x.base ?? this.defaultTaxBase(p, x)),
         importe: Number(x.importe ?? 0),
       }));
 
@@ -897,7 +910,7 @@
           impuesto: 'IVA',
           factor: 'Tasa',
           tasa: 16,
-          base: Number(p.monto_pago || 0),
+          base: this.defaultTaxBase(p, { tipo:'T', impuesto:'IVA', factor:'Tasa', tasa:16 }),
           importe: 0,
         });
       }

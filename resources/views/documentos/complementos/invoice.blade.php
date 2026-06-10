@@ -41,6 +41,65 @@
             </form>
         </div>
 
+        @php($p20 = is_array($pagos20 ?? null) ? $pagos20 : ['totales' => [], 'pagos' => []])
+
+        <h2 class="mt-6 font-semibold">Totales Pagos 2.0</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2 text-sm">
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+                <div class="text-gray-500">MontoTotalPagos</div>
+                <div class="font-semibold">{{ $p20['totales']['MontoTotalPagos'] ?? '0.00' }}</div>
+            </div>
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+                <div class="text-gray-500">TotalTrasladosBaseIVA16</div>
+                <div class="font-semibold">{{ $p20['totales']['TotalTrasladosBaseIVA16'] ?? '0.00' }}</div>
+            </div>
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+                <div class="text-gray-500">TotalTrasladosImpuestoIVA16</div>
+                <div class="font-semibold">{{ $p20['totales']['TotalTrasladosImpuestoIVA16'] ?? '0.00' }}</div>
+            </div>
+        </div>
+
+        @if(!empty($p20['pagos']))
+            <h2 class="mt-6 font-semibold">Impuestos del XML</h2>
+            <div class="overflow-x-auto mt-2">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50 dark:bg-gray-700/50">
+                        <tr>
+                            <th class="p-2 text-left">Documento</th>
+                            <th class="p-2 text-right">ImpPagado</th>
+                            <th class="p-2 text-center">ObjetoImpDR</th>
+                            <th class="p-2 text-right">BaseDR</th>
+                            <th class="p-2 text-center">Tasa</th>
+                            <th class="p-2 text-right">ImporteDR</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach($p20['pagos'] as $pagoXml)
+                        @foreach(($pagoXml['doctos'] ?? []) as $doc)
+                            @forelse(($doc['traslados_dr'] ?? []) as $tdr)
+                                <tr class="border-t border-gray-100 dark:border-gray-700">
+                                    <td class="p-2 font-mono text-xs">{{ $doc['IdDocumento'] ?? '' }}</td>
+                                    <td class="p-2 text-right">{{ $doc['ImpPagado'] ?? '' }}</td>
+                                    <td class="p-2 text-center">{{ $doc['ObjetoImpDR'] ?? '' }}</td>
+                                    <td class="p-2 text-right">{{ $tdr['BaseDR'] ?? '' }}</td>
+                                    <td class="p-2 text-center">{{ $tdr['TasaOCuotaDR'] ?? '' }}</td>
+                                    <td class="p-2 text-right">{{ $tdr['ImporteDR'] ?? '' }}</td>
+                                </tr>
+                            @empty
+                                <tr class="border-t border-gray-100 dark:border-gray-700">
+                                    <td class="p-2 font-mono text-xs">{{ $doc['IdDocumento'] ?? '' }}</td>
+                                    <td class="p-2 text-right">{{ $doc['ImpPagado'] ?? '' }}</td>
+                                    <td class="p-2 text-center">{{ $doc['ObjetoImpDR'] ?? '' }}</td>
+                                    <td class="p-2 text-center text-gray-500" colspan="3">Sin TrasladoDR</td>
+                                </tr>
+                            @endforelse
+                        @endforeach
+                    @endforeach
+                    </tbody>
+                </table>
+            </div>
+        @endif
+
         <h2 class="mt-6 font-semibold">Pagos</h2>
         <div class="overflow-x-auto mt-2">
             <table class="w-full text-sm">

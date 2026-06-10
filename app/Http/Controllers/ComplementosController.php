@@ -162,6 +162,8 @@ class ComplementosController extends Controller
         $payload['banco_receptor'] = (string)($payload['banco_receptor'] ?? '');
         $payload['cuenta_beneficiaria'] = (string)($payload['cuenta_beneficiaria'] ?? '');
 
+        $payload = $this->normalizePayloadPagos($payload);
+
         $pagos = $payload['pagos'] ?? [];
         if (!is_array($pagos)) $pagos = [];
 
@@ -200,10 +202,11 @@ class ComplementosController extends Controller
                     $tipo = in_array($tipoRaw, ['R', 'RET', 'RETENCION', 'RETENCIÓN'], true) ? 'R' : 'T';
                     $factor = (string)($it['factor'] ?? 'Tasa');
                     $base = isset($it['base']) ? (float)$it['base'] : 0.0;
-                    if ($base <= 0) $base = $montoPago;
 
                     $tasa = (float)($it['tasa'] ?? 0);
-                    $importe = strtolower($factor) === 'exento' ? 0.0 : round($base * ($tasa / 100), 2);
+                    $importe = isset($it['importe'])
+                        ? (float)$it['importe']
+                        : (strtolower($factor) === 'exento' ? 0.0 : round($base * ($tasa / 100), 2));
 
                     $it['tipo'] = $tipo;
                     $it['factor'] = $factor;
@@ -364,8 +367,9 @@ class ComplementosController extends Controller
             ->where('users_complementos_id', $comp->id)
             ->orderBy('id')
             ->get();
+        $pagos20 = $this->parsePagos20DetailsFromXml((string)($comp->xml ?? ''));
 
-        return view('documentos.complementos.invoice', compact('comp', 'pagos'));
+        return view('documentos.complementos.invoice', compact('comp', 'pagos', 'pagos20'));
     }
 
     public function downloadXml(int $id)
@@ -763,14 +767,18 @@ class ComplementosController extends Controller
 
             // recalcular impuestos importes (tasa en %)
             if ($p['objeto_imp']) {
+                $p['impuestos'] = $this->normalizePago20DocumentTaxes($p);
+
                 foreach ($p['impuestos'] as $k => $it) {
                     if (!is_array($it)) $it = [];
                     $factor = (string)($it['factor'] ?? 'Tasa');
-                    $base   = (float)($it['base'] ?? $p['monto_pago']);
+                    $base   = (float)($it['base'] ?? 0);
                     $tasa   = (float)($it['tasa'] ?? 0);
 
                     $importe = 0.0;
-                    if (strtolower($factor) !== 'exento') {
+                    if (array_key_exists('importe', $it)) {
+                        $importe = (float)$it['importe'];
+                    } elseif (strtolower($factor) !== 'exento') {
                         $importe = round($base * ($tasa / 100), 2);
                     }
 
@@ -789,6 +797,172 @@ class ComplementosController extends Controller
 
         $payload['pagos'] = $pagos;
         return $payload;
+    }
+
+    private function normalizePago20DocumentTaxes(array $p): array
+    {
+        $items = is_array($p['impuestos'] ?? null) ? $p['impuestos'] : [];
+        if (empty($items)) return [];
+
+        $impPagado = round(max((float)($p['monto_pago'] ?? 0), 0), 2);
+        if ($impPagado <= 0) return $items;
+
+        $original = $this->getOriginalPago20TaxRows($p);
+        if (!empty($original['rows']) && (float)$original['total'] > 0) {
+            $ratio = $impPagado / (float)$original['total'];
+            $normalized = [];
+
+            foreach ($original['rows'] as $row) {
+                $base = round((float)$row['base'] * $ratio, 2);
+                $importe = (string)$row['factor'] === 'Exento'
+                    ? 0.0
+                    : round((float)$row['importe'] * $ratio, 2);
+
+                $normalized[] = [
+                    'tipo' => $row['tipo'],
+                    'impuesto' => $row['impuesto'],
+                    'factor' => $row['factor'],
+                    'tasa' => $row['tasa'],
+                    'base' => $base,
+                    'importe' => $importe,
+                ];
+            }
+
+            return $normalized;
+        }
+
+        foreach ($items as $k => $it) {
+            if (!is_array($it)) $it = [];
+
+            $tipo = strtoupper(trim((string)($it['tipo'] ?? 'T')));
+            $imp = strtoupper(trim((string)($it['impuesto'] ?? 'IVA')));
+            $factor = (string)($it['factor'] ?? 'Tasa');
+            $tasa = (float)($it['tasa'] ?? 0);
+
+            $base = (float)($it['base'] ?? 0);
+            $looksLikeTotalAsBase = abs($base - $impPagado) <= 0.01;
+
+            if ($tipo !== 'R' && $imp === 'IVA' && strcasecmp($factor, 'Tasa') === 0 && abs($tasa - 16.0) < 0.000001 && ($base <= 0 || $looksLikeTotalAsBase)) {
+                $base = round($impPagado / 1.16, 2);
+                $it['importe'] = round($base * 0.16, 2);
+            } elseif ($base <= 0) {
+                $base = $impPagado;
+                $it['importe'] = strcasecmp($factor, 'Exento') === 0 ? 0.0 : round($base * ($tasa / 100), 2);
+            }
+
+            $it['tipo'] = in_array($tipo, ['R', 'RET', 'RETENCION', 'RETENCIÓN'], true) ? 'R' : 'T';
+            $it['base'] = round($base, 2);
+            $it['tasa'] = round($tasa, 6);
+            $it['importe'] = round((float)($it['importe'] ?? 0), 2);
+            $items[$k] = $it;
+        }
+
+        return $items;
+    }
+
+    private function getOriginalPago20TaxRows(array $p): array
+    {
+        $facturaId = (int)($p['factura_id'] ?? 0);
+        $uuid = strtoupper(trim((string)($p['uuid'] ?? '')));
+
+        if ($facturaId <= 0 && $uuid === '') {
+            return ['total' => 0.0, 'rows' => []];
+        }
+
+        $userId = (int)auth()->id();
+        $q = DB::table('facturas')->where('users_id', $userId);
+
+        if ($facturaId > 0) {
+            $q->where('id', $facturaId);
+        } else {
+            $q->whereRaw('UPPER(TRIM(uuid)) = ?', [$uuid]);
+        }
+
+        $factura = $q->first(['id', 'xml', 'total']);
+        if (!$factura) {
+            return ['total' => 0.0, 'rows' => []];
+        }
+
+        $parsed = $this->parsePago20TaxRowsFromFacturaXml((string)($factura->xml ?? ''));
+        if (!empty($parsed['rows']) && (float)$parsed['total'] > 0) {
+            return $parsed;
+        }
+
+        return [
+            'total' => round((float)($factura->total ?? 0), 2),
+            'rows' => [],
+        ];
+    }
+
+    private function parsePago20TaxRowsFromFacturaXml(string $xmlString): array
+    {
+        $out = ['total' => 0.0, 'rows' => []];
+        $xmlString = trim($xmlString);
+        if ($xmlString === '') return $out;
+
+        $dom = new \DOMDocument();
+        libxml_use_internal_errors(true);
+        $ok = $dom->loadXML($xmlString);
+        libxml_clear_errors();
+        if (!$ok) return $out;
+
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('cfdi', 'http://www.sat.gob.mx/cfd/4');
+        $xp->registerNamespace('cfdi33', 'http://www.sat.gob.mx/cfd/3');
+
+        $comp = $xp->query('/*[local-name()="Comprobante"]')->item(0);
+        if ($comp instanceof \DOMElement) {
+            $rawTotal = (string)($comp->getAttribute('Total') ?: $comp->getAttribute('total'));
+            $out['total'] = round((float)str_replace([',', ' '], '', $rawTotal), 2);
+        }
+
+        $rows = [];
+        foreach ($xp->query('//*[local-name()="Concepto"]/*[local-name()="Impuestos"]/*[local-name()="Traslados"]/*[local-name()="Traslado"]') as $n) {
+            if ($n instanceof \DOMElement) {
+                $rows[] = $this->taxRowFromXmlNode($n, 'T');
+            }
+        }
+        foreach ($xp->query('//*[local-name()="Concepto"]/*[local-name()="Impuestos"]/*[local-name()="Retenciones"]/*[local-name()="Retencion"]') as $n) {
+            if ($n instanceof \DOMElement) {
+                $rows[] = $this->taxRowFromXmlNode($n, 'R');
+            }
+        }
+
+        $grouped = [];
+        foreach ($rows as $row) {
+            $key = implode('|', [$row['tipo'], $row['impuesto'], $row['factor'], number_format((float)$row['tasa'], 6, '.', '')]);
+            if (!isset($grouped[$key])) {
+                $grouped[$key] = $row;
+                continue;
+            }
+            $grouped[$key]['base'] += $row['base'];
+            $grouped[$key]['importe'] += $row['importe'];
+        }
+
+        $out['rows'] = array_values(array_map(function ($row) {
+            $row['base'] = round((float)$row['base'], 2);
+            $row['importe'] = round((float)$row['importe'], 2);
+            return $row;
+        }, $grouped));
+
+        return $out;
+    }
+
+    private function taxRowFromXmlNode(\DOMElement $n, string $tipo): array
+    {
+        $impuesto = (string)$n->getAttribute('Impuesto');
+        $factor = (string)($n->getAttribute('TipoFactor') ?: 'Tasa');
+        $tasaRaw = (string)$n->getAttribute('TasaOCuota');
+        $tasa = $tasaRaw !== '' ? round(((float)$tasaRaw) * 100, 6) : 0.0;
+
+        return [
+            'tipo' => $tipo,
+            'impuesto' => $this->mapSatCodeToImpuesto($impuesto),
+            'factor' => $this->mapFactorToSat($factor),
+            'tasa' => $tasa,
+            'base' => (float)str_replace([',', ' '], '', (string)$n->getAttribute('Base')),
+            'importe' => (float)str_replace([',', ' '], '', (string)$n->getAttribute('Importe')),
+        ];
     }
 
     private function getEmisorDataForUser(int $userId): array
@@ -949,6 +1123,8 @@ class ComplementosController extends Controller
 
     private function buildCfdiPagos20Xml(array $payload, $cliente, array $emisor, string $serie, int $folio, array $csd): string
     {
+        $payload = $this->normalizePayloadPagos($payload);
+
         $fechaDocumento = Carbon::parse((string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? '')))->format('Y-m-d\TH:i:s');
         $fechaPago      = Carbon::parse((string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? '')))->format('Y-m-d\TH:i:s');
 
@@ -961,6 +1137,7 @@ class ComplementosController extends Controller
 
         // Totales Pago (MontoTotalPagos) y totales de impuestos por SAT (básico IVA16 + retenciones)
         [$montoTotal, $totalesSat, $impPSums] = $this->calculatePagos20Totals($payload);
+        $this->logPagos20TaxValidation($payload, $montoTotal, $totalesSat, $impPSums);
 
         $dom = new \DOMDocument('1.0', 'UTF-8');
         $dom->preserveWhiteSpace = false;
@@ -1277,6 +1454,43 @@ private function calculatePagos20Totals(array $payload): array
     return [$montoTotal, $totalesSat, $impPSums];
 }
 
+private function logPagos20TaxValidation(array $payload, float $montoTotal, array $totalesSat, array $impPSums): void
+{
+    $sumImpPagado = 0.0;
+    foreach (($payload['pagos'] ?? []) as $p) {
+        $sumImpPagado += (float)($p['monto_pago'] ?? 0);
+    }
+    $sumImpPagado = round($sumImpPagado, 2);
+
+    $sumBaseIva16 = 0.0;
+    $sumImporteIva16 = 0.0;
+    foreach (($impPSums['traslados'] ?? []) as $row) {
+        if (
+            (string)($row['impuesto'] ?? '') === '002'
+            && (string)($row['factor'] ?? '') === 'Tasa'
+            && abs((float)($row['tasa'] ?? 0) - 0.160000) < 0.000001
+        ) {
+            $sumBaseIva16 += (float)($row['base'] ?? 0);
+            $sumImporteIva16 += (float)($row['importe'] ?? 0);
+        }
+    }
+
+    $sumBaseIva16 = round($sumBaseIva16, 2);
+    $sumImporteIva16 = round($sumImporteIva16, 2);
+    $totalBaseIva16 = round((float)($totalesSat['TotalTrasladosBaseIVA16'] ?? 0), 2);
+    $totalImporteIva16 = round((float)($totalesSat['TotalTrasladosImpuestoIVA16'] ?? 0), 2);
+
+    Log::info('Pagos20 tax totals validation', [
+        'sum_imp_pagado' => $sumImpPagado,
+        'monto_total_pagos' => round($montoTotal, 2),
+        'sum_base_p_iva16' => $sumBaseIva16,
+        'total_traslados_base_iva16' => $totalBaseIva16,
+        'sum_importe_p_iva16' => $sumImporteIva16,
+        'total_traslados_impuesto_iva16' => $totalImporteIva16,
+        'iva16_was_not_monto_total_times_rate' => abs($totalImporteIva16 - round($montoTotal * 0.16, 2)) > 0.01,
+    ]);
+}
+
 private function mapImpuestoToSatCode(string $imp): string
 {
     $imp = strtoupper(trim($imp));
@@ -1285,6 +1499,15 @@ private function mapImpuestoToSatCode(string $imp): string
         'IVA'  => '002',
         'IEPS' => '003',
         default => '002',
+    };
+}
+
+private function mapSatCodeToImpuesto(string $code): string
+{
+    return match (trim($code)) {
+        '001' => 'ISR',
+        '003' => 'IEPS',
+        default => 'IVA',
     };
 }
 
@@ -1511,6 +1734,88 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $raw = (string)$tot->getAttribute('MontoTotalPagos');
         $raw = str_replace([',', ' '], '', $raw);
         return (float)$raw;
+    }
+
+    private function parsePagos20DetailsFromXml(string $xmlString): array
+    {
+        $out = ['totales' => [], 'pagos' => []];
+
+        $xmlString = trim($xmlString);
+        if ($xmlString === '') return $out;
+
+        $dom = new \DOMDocument();
+        libxml_use_internal_errors(true);
+        $ok = $dom->loadXML($xmlString, LIBXML_NONET);
+        libxml_clear_errors();
+        if (!$ok) return $out;
+
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('pago20', 'http://www.sat.gob.mx/Pagos20');
+
+        $tot = $xp->query('//pago20:Totales')->item(0);
+        if ($tot instanceof \DOMElement) {
+            foreach (['MontoTotalPagos', 'TotalTrasladosBaseIVA16', 'TotalTrasladosImpuestoIVA16'] as $attr) {
+                if ($tot->hasAttribute($attr)) {
+                    $out['totales'][$attr] = (string)$tot->getAttribute($attr);
+                }
+            }
+        }
+
+        foreach ($xp->query('//pago20:Pago') as $pagoNode) {
+            if (!$pagoNode instanceof \DOMElement) continue;
+
+            $pago = [
+                'FechaPago' => (string)$pagoNode->getAttribute('FechaPago'),
+                'MonedaP' => (string)$pagoNode->getAttribute('MonedaP'),
+                'TipoCambioP' => (string)$pagoNode->getAttribute('TipoCambioP'),
+                'Monto' => (string)$pagoNode->getAttribute('Monto'),
+                'doctos' => [],
+                'traslados_p' => [],
+            ];
+
+            foreach ($xp->query('pago20:DoctoRelacionado', $pagoNode) as $docNode) {
+                if (!$docNode instanceof \DOMElement) continue;
+
+                $doc = [
+                    'IdDocumento' => (string)$docNode->getAttribute('IdDocumento'),
+                    'ObjetoImpDR' => (string)$docNode->getAttribute('ObjetoImpDR'),
+                    'ImpPagado' => (string)$docNode->getAttribute('ImpPagado'),
+                    'MonedaDR' => (string)$docNode->getAttribute('MonedaDR'),
+                    'EquivalenciaDR' => (string)$docNode->getAttribute('EquivalenciaDR'),
+                    'traslados_dr' => [],
+                ];
+
+                foreach ($xp->query('pago20:ImpuestosDR/pago20:TrasladosDR/pago20:TrasladoDR', $docNode) as $tdr) {
+                    if ($tdr instanceof \DOMElement) {
+                        $doc['traslados_dr'][] = [
+                            'BaseDR' => (string)$tdr->getAttribute('BaseDR'),
+                            'ImpuestoDR' => (string)$tdr->getAttribute('ImpuestoDR'),
+                            'TipoFactorDR' => (string)$tdr->getAttribute('TipoFactorDR'),
+                            'TasaOCuotaDR' => (string)$tdr->getAttribute('TasaOCuotaDR'),
+                            'ImporteDR' => (string)$tdr->getAttribute('ImporteDR'),
+                        ];
+                    }
+                }
+
+                $pago['doctos'][] = $doc;
+            }
+
+            foreach ($xp->query('pago20:ImpuestosP/pago20:TrasladosP/pago20:TrasladoP', $pagoNode) as $tp) {
+                if ($tp instanceof \DOMElement) {
+                    $pago['traslados_p'][] = [
+                        'BaseP' => (string)$tp->getAttribute('BaseP'),
+                        'ImpuestoP' => (string)$tp->getAttribute('ImpuestoP'),
+                        'TipoFactorP' => (string)$tp->getAttribute('TipoFactorP'),
+                        'TasaOCuotaP' => (string)$tp->getAttribute('TasaOCuotaP'),
+                        'ImporteP' => (string)$tp->getAttribute('ImporteP'),
+                    ];
+                }
+            }
+
+            $out['pagos'][] = $pago;
+        }
+
+        return $out;
     }
 
     private function catalogoFormasPago(): array
@@ -1936,6 +2241,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $pdfBinary = \Barryvdh\DomPDF\Facade\Pdf::loadView('documentos.complementos.pdf', [
             'meta' => $meta,
             'parties' => $parties,
+            'pagos20' => $this->parsePagos20DetailsFromXml($xmlTimbrado),
             'xml' => $xmlTimbrado,
             'logoB64' => $logoB64,
         ])->output();
@@ -2030,6 +2336,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         }
 
         [$montoTotalPagos, $totalesSat, $impPSums] = $this->calculatePagos20Totals($payload);
+        $this->logPagos20TaxValidation($payload, $montoTotalPagos, $totalesSat, $impPSums);
 
         // ===== DOM =====
         $dom = new \DOMDocument('1.0', 'UTF-8');
