@@ -844,7 +844,7 @@ class ComplementosController extends Controller
 
             if ($tipo !== 'R' && $imp === 'IVA' && strcasecmp($factor, 'Tasa') === 0 && abs($tasa - 16.0) < 0.000001 && ($base <= 0 || $looksLikeTotalAsBase)) {
                 $base = round($impPagado / 1.16, 2);
-                $it['importe'] = round($base * 0.16, 2);
+                $it['importe'] = round($impPagado - $base, 2);
             } elseif ($base <= 0) {
                 $base = $impPagado;
                 $it['importe'] = strcasecmp($factor, 'Exento') === 0 ? 0.0 : round($base * ($tasa / 100), 2);
@@ -878,20 +878,155 @@ class ComplementosController extends Controller
             $q->whereRaw('UPPER(TRIM(uuid)) = ?', [$uuid]);
         }
 
-        $factura = $q->first(['id', 'xml', 'total']);
+        $factura = $q->first($this->facturaOriginalSelectColumns());
         if (!$factura) {
             return ['total' => 0.0, 'rows' => []];
         }
 
-        $parsed = $this->parsePago20TaxRowsFromFacturaXml((string)($factura->xml ?? ''));
-        if (!empty($parsed['rows']) && (float)$parsed['total'] > 0) {
-            return $parsed;
+        $xml = property_exists($factura, 'xml') ? (string)($factura->xml ?? '') : '';
+        $total = $this->getFacturaTotalFromRecord($factura);
+        $iva16 = $this->extractIva16FromFacturaXml($xml);
+
+        if (!empty($iva16['rows'])) {
+            return [
+                'total' => round((float)($total ?? $iva16['total'] ?? 0), 2),
+                'rows' => $iva16['rows'],
+            ];
         }
 
         return [
-            'total' => round((float)($factura->total ?? 0), 2),
+            'total' => round((float)($total ?? 0), 2),
             'rows' => [],
         ];
+    }
+
+    private function facturaOriginalSelectColumns(): array
+    {
+        $columns = ['id'];
+        if (Schema::hasColumn('facturas', 'xml')) {
+            $columns[] = 'xml';
+        }
+
+        foreach ($this->facturaTotalColumnCandidates() as $column) {
+            if (Schema::hasColumn('facturas', $column)) {
+                $columns[] = $column;
+            }
+        }
+
+        return array_values(array_unique($columns));
+    }
+
+    private function facturaTotalColumnCandidates(): array
+    {
+        return [
+            'total',
+            'total_factura',
+            'importe_total',
+            'total_cfdi',
+            'total_comprobante',
+            'monto_total',
+        ];
+    }
+
+    private function getFacturaTotalFromRecord($factura): ?float
+    {
+        if (!$factura) {
+            return null;
+        }
+
+        foreach ($this->facturaTotalColumnCandidates() as $column) {
+            if (property_exists($factura, $column) && is_numeric($factura->{$column}) && (float)$factura->{$column} > 0) {
+                return round((float)$factura->{$column}, 2);
+            }
+        }
+
+        if (property_exists($factura, 'xml')) {
+            $xmlTotals = $this->extractIva16FromFacturaXml((string)($factura->xml ?? ''));
+            if (is_numeric($xmlTotals['total'] ?? null) && (float)$xmlTotals['total'] > 0) {
+                return round((float)$xmlTotals['total'], 2);
+            }
+        }
+
+        return null;
+    }
+
+    private function extractIva16FromFacturaXml(?string $xml): array
+    {
+        $out = [
+            'total' => 0.0,
+            'subtotal' => 0.0,
+            'base' => 0.0,
+            'importe' => 0.0,
+            'rows' => [],
+        ];
+
+        $xml = trim((string)$xml);
+        if ($xml === '') {
+            return $out;
+        }
+
+        libxml_use_internal_errors(true);
+        $dom = new \DOMDocument();
+        $ok = $dom->loadXML($xml, LIBXML_NONET);
+        libxml_clear_errors();
+        if (!$ok) {
+            return $out;
+        }
+
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('cfdi', 'http://www.sat.gob.mx/cfd/4');
+        $xp->registerNamespace('cfdi33', 'http://www.sat.gob.mx/cfd/3');
+
+        $comp = $xp->query('/*[local-name()="Comprobante"]')->item(0);
+        if ($comp instanceof \DOMElement) {
+            $out['total'] = round($this->xmlMoneyToFloat($comp->getAttribute('Total') ?: $comp->getAttribute('total')), 2);
+            $out['subtotal'] = round($this->xmlMoneyToFloat($comp->getAttribute('SubTotal') ?: $comp->getAttribute('subTotal') ?: $comp->getAttribute('subtotal')), 2);
+        }
+
+        $base = 0.0;
+        $importe = 0.0;
+        $nodes = $xp->query('/*[local-name()="Comprobante"]/*[local-name()="Impuestos"]/*[local-name()="Traslados"]/*[local-name()="Traslado"][@Impuesto="002" and (@TasaOCuota="0.160000" or @TasaOCuota="0.16")]');
+
+        foreach ($nodes as $node) {
+            if (!$node instanceof \DOMElement) continue;
+            $base += $this->xmlMoneyToFloat((string)$node->getAttribute('Base'));
+            $importe += $this->xmlMoneyToFloat((string)$node->getAttribute('Importe'));
+        }
+
+        if ($base <= 0.0 || $importe <= 0.0) {
+            $base = 0.0;
+            $importe = 0.0;
+            $conceptNodes = $xp->query('//*[local-name()="Concepto"]/*[local-name()="Impuestos"]/*[local-name()="Traslados"]/*[local-name()="Traslado"][@Impuesto="002" and (@TasaOCuota="0.160000" or @TasaOCuota="0.16")]');
+            foreach ($conceptNodes as $node) {
+                if (!$node instanceof \DOMElement) continue;
+                $base += $this->xmlMoneyToFloat((string)$node->getAttribute('Base'));
+                $importe += $this->xmlMoneyToFloat((string)$node->getAttribute('Importe'));
+            }
+        }
+
+        $base = round($base, 2);
+        $importe = round($importe, 2);
+        $out['base'] = $base;
+        $out['importe'] = $importe;
+
+        if ($base > 0.0 || $importe > 0.0) {
+            $out['rows'][] = [
+                'tipo' => 'T',
+                'impuesto' => 'IVA',
+                'factor' => 'Tasa',
+                'tasa' => 16.0,
+                'base' => $base,
+                'importe' => $importe,
+            ];
+        }
+
+        return $out;
+    }
+
+    private function xmlMoneyToFloat(?string $value): float
+    {
+        $value = str_replace([',', ' '], '', trim((string)$value));
+        return is_numeric($value) ? (float)$value : 0.0;
     }
 
     private function parsePago20TaxRowsFromFacturaXml(string $xmlString): array
