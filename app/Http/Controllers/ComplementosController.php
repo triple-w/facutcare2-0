@@ -65,7 +65,7 @@ class ComplementosController extends Controller
         return view('documentos.complementos.index', compact('rows'));
     }
 
-    // ✅ Nuevo complemento: limpia draft completo
+    // ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Nuevo complemento: limpia draft completo
     public function nueva()
     {
         session()->forget('complemento_draft');
@@ -90,7 +90,7 @@ class ComplementosController extends Controller
         $formasPago = $this->catalogoFormasPago();
         $monedas    = $this->catalogoMonedas();
 
-        // ✅ folios tipo PAGO
+        // ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ folios tipo PAGO
         $foliosPago = $this->foliosPago($userId);
 
         $endpoints = [
@@ -123,7 +123,7 @@ class ComplementosController extends Controller
         $payload = json_decode((string)$request->input('payload', ''), true);
 
         if (!is_array($payload) || empty($payload)) {
-            return redirect()->route('complementos.create')->with('error', 'Payload inválido.');
+            return redirect()->route('complementos.create')->with('error', 'Payload invÃƒÆ’Ã‚Â¡lido.');
         }
 
         // guarda borrador para volver a create con info
@@ -146,7 +146,7 @@ class ComplementosController extends Controller
                 'user_id' => $userId,
                 'cliente_id' => $clienteId,
             ]);
-            return redirect()->route('complementos.create')->with('error', 'Cliente inválido.');
+            return redirect()->route('complementos.create')->with('error', 'Cliente invÃƒÆ’Ã‚Â¡lido.');
         }
 
         $payload['serie_pago'] = (string)($payload['serie_pago'] ?? '');
@@ -167,76 +167,48 @@ class ComplementosController extends Controller
         $pagos = $payload['pagos'] ?? [];
         if (!is_array($pagos)) $pagos = [];
 
-        $subtotal = 0.0;
-        $total = 0.0;
-        $traslados = 0.0;
-        $retenciones = 0.0;
-
         foreach ($pagos as $i => $p) {
             if (!is_array($p)) $p = [];
 
-            $saldoAnterior = (float)($p['saldo_anterior'] ?? 0);
-            $montoPago = max((float)($p['monto_pago'] ?? 0), 0);
-            $saldoInsoluto = array_key_exists('saldo_insoluto', $p)
-                ? (float)($p['saldo_insoluto'] ?? 0)
-                : ($saldoAnterior - $montoPago);
-            $saldoInsoluto = max(round($saldoInsoluto, 2), 0);
-
-            $p['saldo_anterior'] = round($saldoAnterior, 2);
-            $p['monto_pago'] = round($montoPago, 2);
-            $p['saldo_insoluto'] = $saldoInsoluto;
+            $p['saldo_anterior'] = $this->moneyString($p['saldo_anterior'] ?? '0');
+            $p['monto_pago'] = $this->moneyString($p['monto_pago'] ?? '0');
+            $p['saldo_insoluto'] = $this->moneyString($p['saldo_insoluto'] ?? '0');
             $p['num_parcialidad'] = (int)($p['num_parcialidad'] ?? 1);
             $p['moneda_dr'] = (string)($p['moneda_dr'] ?? 'MXN');
             $p['metodo_pago_dr'] = (string)($p['metodo_pago_dr'] ?? 'PPD');
             $p['objeto_imp'] = (bool)($p['objeto_imp'] ?? false);
             $p['impuestos'] = is_array($p['impuestos'] ?? null) ? $p['impuestos'] : [];
 
-            $total += $montoPago;
-
-            if ($p['objeto_imp'] && is_array($p['impuestos'])) {
-                $basesPago = [];
-                foreach ($p['impuestos'] as $k => $it) {
-                    if (!is_array($it)) $it = [];
-
-                    $tipoRaw = strtoupper(trim((string)($it['tipo'] ?? 'T')));
-                    $tipo = in_array($tipoRaw, ['R', 'RET', 'RETENCION', 'RETENCIÓN'], true) ? 'R' : 'T';
-                    $factor = (string)($it['factor'] ?? 'Tasa');
-                    $base = isset($it['base']) ? (float)$it['base'] : 0.0;
-
-                    $tasa = (float)($it['tasa'] ?? 0);
-                    $importe = isset($it['importe'])
-                        ? (float)$it['importe']
-                        : (strtolower($factor) === 'exento' ? 0.0 : round($base * ($tasa / 100), 2));
-
-                    $it['tipo'] = $tipo;
-                    $it['factor'] = $factor;
-                    $it['base'] = round($base, 2);
-                    $it['tasa'] = round($tasa, 6);
-                    $it['importe'] = round($importe, 2);
-                    if ($it['base'] > 0) $basesPago[] = $it['base'];
-
-                    if ($tipo === 'R') $retenciones += $importe;
-                    else $traslados += $importe;
-
-                    $p['impuestos'][$k] = $it;
-                }
-                $subtotal += !empty($basesPago) ? max($basesPago) : $montoPago;
-            } else {
-                $subtotal += $montoPago;
-            }
-
             $pagos[$i] = $p;
         }
 
         $payload['pagos'] = $pagos;
+        $this->validatePagos20TaxConsistency($payload);
+        [$montoTotal, $totalesSat, $impPSums] = $this->calculatePagos20Totals($payload);
+
+        $subtotal = '0.00';
+        foreach (($impPSums['traslados'] ?? []) as $row) {
+            $subtotal = $this->sumMoneyStrings($subtotal, $row['base'] ?? '0');
+        }
+
+        $traslados = '0.00';
+        foreach (($impPSums['traslados'] ?? []) as $row) {
+            $traslados = $this->sumMoneyStrings($traslados, $row['importe'] ?? '0');
+        }
+
+        $retenciones = '0.00';
+        foreach (($impPSums['retenciones'] ?? []) as $row) {
+            $retenciones = $this->sumMoneyStrings($retenciones, $row['importe'] ?? '0');
+        }
 
         $totales = [
-            'subtotal' => round($subtotal, 2),
-            'traslados' => round($traslados, 2),
-            'retenciones' => round($retenciones, 2),
-            'total' => round($total, 2),
+            'subtotal' => $subtotal,
+            'traslados' => $traslados,
+            'retenciones' => $retenciones,
+            'total' => $montoTotal,
+            'pagos20' => $totalesSat,
+            'impuestos_p' => $impPSums,
         ];
-
         if ($flashError !== null) {
             session()->flash('error', $flashError);
         }
@@ -765,29 +737,8 @@ class ComplementosController extends Controller
             $p['objeto_imp'] = (bool)($p['objeto_imp'] ?? false);
             $p['impuestos']  = is_array($p['impuestos'] ?? null) ? $p['impuestos'] : [];
 
-            // recalcular impuestos importes (tasa en %)
             if ($p['objeto_imp']) {
                 $p['impuestos'] = $this->normalizePago20DocumentTaxes($p);
-
-                foreach ($p['impuestos'] as $k => $it) {
-                    if (!is_array($it)) $it = [];
-                    $factor = (string)($it['factor'] ?? 'Tasa');
-                    $base   = (float)($it['base'] ?? 0);
-                    $tasa   = (float)($it['tasa'] ?? 0);
-
-                    $importe = 0.0;
-                    if (array_key_exists('importe', $it)) {
-                        $importe = (float)$it['importe'];
-                    } elseif (strtolower($factor) !== 'exento') {
-                        $importe = round($base * ($tasa / 100), 2);
-                    }
-
-                    $it['base']    = round($base, 2);
-                    $it['tasa']    = round($tasa, 6);
-                    $it['importe'] = round($importe, 2);
-
-                    $p['impuestos'][$k] = $it;
-                }
             } else {
                 $p['impuestos'] = [];
             }
@@ -802,58 +753,70 @@ class ComplementosController extends Controller
     private function normalizePago20DocumentTaxes(array $p): array
     {
         $items = is_array($p['impuestos'] ?? null) ? $p['impuestos'] : [];
-        if (empty($items)) return [];
-
-        $impPagado = round(max((float)($p['monto_pago'] ?? 0), 0), 2);
-        if ($impPagado <= 0) return $items;
+        $impPagado = $this->moneyString($p['monto_pago'] ?? '0');
+        if ($this->moneyToCents($impPagado) <= 0) return [];
 
         $original = $this->getOriginalPago20TaxRows($p);
-        if (!empty($original['rows']) && (float)$original['total'] > 0) {
-            $ratio = $impPagado / (float)$original['total'];
+        if (!empty($original['rows'])) {
+            $saldoAnt = $this->moneyString($p['saldo_anterior'] ?? '0');
+            if ($this->moneyToCents($saldoAnt) <= 0) {
+                $saldoAnt = $this->moneyString($original['total'] ?? '0');
+            }
+
+            $paidCents = $this->moneyToCents($impPagado);
+            $saldoCents = $this->moneyToCents($saldoAnt);
+            $isFullPayment = $saldoCents > 0 && $paidCents === $saldoCents;
             $normalized = [];
 
             foreach ($original['rows'] as $row) {
-                $base = round((float)$row['base'] * $ratio, 2);
-                $importe = (string)$row['factor'] === 'Exento'
-                    ? 0.0
-                    : round((float)$row['importe'] * $ratio, 2);
+                $tipoFactor = $this->mapFactorToSat((string)($row['factor'] ?? 'Tasa'));
+                $rate = $this->rateString($row['tasa_cuota'] ?? $this->rateFromPercentString($row['tasa'] ?? '0'));
+                $base = ($isFullPayment || $saldoCents <= 0)
+                    ? $this->moneyString($row['base'] ?? '0')
+                    : $this->prorateMoney($row['base'] ?? '0', $impPagado, $saldoAnt);
+                $importe = $tipoFactor === 'Exento' ? null : $this->taxAmountFromBase($base, $rate);
 
                 $normalized[] = [
-                    'tipo' => $row['tipo'],
-                    'impuesto' => $row['impuesto'],
-                    'factor' => $row['factor'],
-                    'tasa' => $row['tasa'],
+                    'tipo' => strtoupper((string)($row['tipo'] ?? 'T')) === 'R' ? 'R' : 'T',
+                    'impuesto' => $this->mapSatCodeToImpuesto((string)($row['impuesto_sat'] ?? $this->mapImpuestoToSatCode((string)($row['impuesto'] ?? 'IVA')))),
+                    'impuesto_sat' => (string)($row['impuesto_sat'] ?? $this->mapImpuestoToSatCode((string)($row['impuesto'] ?? 'IVA'))),
+                    'factor' => $tipoFactor,
+                    'tasa' => $this->percentFromRateString($rate),
+                    'tasa_cuota' => $rate,
                     'base' => $base,
                     'importe' => $importe,
+                    'base_original' => $this->moneyString($row['base'] ?? '0'),
+                    'importe_original' => $tipoFactor === 'Exento' ? null : $this->moneyString($row['importe_original'] ?? '0'),
+                    'origen_xml' => true,
                 ];
             }
 
             return $normalized;
         }
 
+        if (empty($items)) return [];
+
         foreach ($items as $k => $it) {
             if (!is_array($it)) $it = [];
 
             $tipo = strtoupper(trim((string)($it['tipo'] ?? 'T')));
             $imp = strtoupper(trim((string)($it['impuesto'] ?? 'IVA')));
-            $factor = (string)($it['factor'] ?? 'Tasa');
-            $tasa = (float)($it['tasa'] ?? 0);
+            $factor = $this->mapFactorToSat((string)($it['factor'] ?? 'Tasa'));
+            $rate = $this->rateString($it['tasa_cuota'] ?? $this->rateFromPercentString($it['tasa'] ?? 0));
+            $base = $this->moneyString($it['base'] ?? '0');
 
-            $base = (float)($it['base'] ?? 0);
-            $looksLikeTotalAsBase = abs($base - $impPagado) <= 0.01;
-
-            if ($tipo !== 'R' && $imp === 'IVA' && strcasecmp($factor, 'Tasa') === 0 && abs($tasa - 16.0) < 0.000001 && ($base <= 0 || $looksLikeTotalAsBase)) {
-                $base = round($impPagado / 1.16, 2);
-                $it['importe'] = round($impPagado - $base, 2);
-            } elseif ($base <= 0) {
+            if ($this->moneyToCents($base) <= 0) {
                 $base = $impPagado;
-                $it['importe'] = strcasecmp($factor, 'Exento') === 0 ? 0.0 : round($base * ($tasa / 100), 2);
             }
 
-            $it['tipo'] = in_array($tipo, ['R', 'RET', 'RETENCION', 'RETENCIÓN'], true) ? 'R' : 'T';
-            $it['base'] = round($base, 2);
-            $it['tasa'] = round($tasa, 6);
-            $it['importe'] = round((float)($it['importe'] ?? 0), 2);
+            $it['tipo'] = in_array($tipo, ['R', 'RET', 'RETENCION', 'RETENCIÃƒâ€œN'], true) ? 'R' : 'T';
+            $it['impuesto'] = $imp;
+            $it['impuesto_sat'] = $this->mapImpuestoToSatCode($imp);
+            $it['factor'] = $factor;
+            $it['base'] = $base;
+            $it['tasa_cuota'] = $rate;
+            $it['tasa'] = $this->percentFromRateString($rate);
+            $it['importe'] = $factor === 'Exento' ? null : $this->taxAmountFromBase($base, $rate);
             $items[$k] = $it;
         }
 
@@ -866,7 +829,7 @@ class ComplementosController extends Controller
         $uuid = strtoupper(trim((string)($p['uuid'] ?? '')));
 
         if ($facturaId <= 0 && $uuid === '') {
-            return ['total' => 0.0, 'rows' => []];
+            return ['total' => '0.00', 'rows' => []];
         }
 
         $userId = (int)auth()->id();
@@ -880,24 +843,15 @@ class ComplementosController extends Controller
 
         $factura = $q->first($this->facturaOriginalSelectColumns());
         if (!$factura) {
-            return ['total' => 0.0, 'rows' => []];
+            return ['total' => '0.00', 'rows' => []];
         }
 
         $xml = property_exists($factura, 'xml') ? (string)($factura->xml ?? '') : '';
-        $total = $this->getFacturaTotalFromRecord($factura);
-        $iva16 = $this->extractIva16FromFacturaXml($xml);
+        $parsed = $this->extractPago20SourceTaxesFromFacturaXml($xml);
+        $total = $this->getFacturaTotalFromRecord($factura) ?? ($parsed['total'] ?? '0.00');
+        $parsed['total'] = $this->moneyString($total);
 
-        if (!empty($iva16['rows'])) {
-            return [
-                'total' => round((float)($total ?? $iva16['total'] ?? 0), 2),
-                'rows' => $iva16['rows'],
-            ];
-        }
-
-        return [
-            'total' => round((float)($total ?? 0), 2),
-            'rows' => [],
-        ];
+        return $parsed;
     }
 
     private function facturaOriginalSelectColumns(): array
@@ -928,178 +882,121 @@ class ComplementosController extends Controller
         ];
     }
 
-    private function getFacturaTotalFromRecord($factura): ?float
+    private function getFacturaTotalFromRecord($factura): ?string
     {
         if (!$factura) {
             return null;
         }
 
         foreach ($this->facturaTotalColumnCandidates() as $column) {
-            if (property_exists($factura, $column) && is_numeric($factura->{$column}) && (float)$factura->{$column} > 0) {
-                return round((float)$factura->{$column}, 2);
+            if (property_exists($factura, $column) && $this->moneyToCents($factura->{$column} ?? '0') > 0) {
+                return $this->moneyString($factura->{$column});
             }
         }
 
         if (property_exists($factura, 'xml')) {
-            $xmlTotals = $this->extractIva16FromFacturaXml((string)($factura->xml ?? ''));
-            if (is_numeric($xmlTotals['total'] ?? null) && (float)$xmlTotals['total'] > 0) {
-                return round((float)$xmlTotals['total'], 2);
+            $xmlTotals = $this->extractPago20SourceTaxesFromFacturaXml((string)($factura->xml ?? ''));
+            if ($this->moneyToCents($xmlTotals['total'] ?? '0') > 0) {
+                return $this->moneyString($xmlTotals['total']);
             }
         }
 
         return null;
     }
 
-    private function extractIva16FromFacturaXml(?string $xml): array
+    private function extractPago20SourceTaxesFromFacturaXml(?string $xml): array
     {
         $out = [
-            'total' => 0.0,
-            'subtotal' => 0.0,
-            'base' => 0.0,
-            'importe' => 0.0,
+            'total' => '0.00',
+            'subtotal' => '0.00',
+            'moneda' => 'MXN',
+            'metodo_pago' => '',
+            'uuid' => '',
+            'serie' => '',
+            'folio' => '',
             'rows' => [],
         ];
 
         $xml = trim((string)$xml);
-        if ($xml === '') {
-            return $out;
-        }
+        if ($xml === '') return $out;
 
         libxml_use_internal_errors(true);
         $dom = new \DOMDocument();
         $ok = $dom->loadXML($xml, LIBXML_NONET);
-        libxml_clear_errors();
-        if (!$ok) {
-            return $out;
-        }
-
-        $xp = new \DOMXPath($dom);
-        $xp->registerNamespace('cfdi', 'http://www.sat.gob.mx/cfd/4');
-        $xp->registerNamespace('cfdi33', 'http://www.sat.gob.mx/cfd/3');
-
-        $comp = $xp->query('/*[local-name()="Comprobante"]')->item(0);
-        if ($comp instanceof \DOMElement) {
-            $out['total'] = round($this->xmlMoneyToFloat($comp->getAttribute('Total') ?: $comp->getAttribute('total')), 2);
-            $out['subtotal'] = round($this->xmlMoneyToFloat($comp->getAttribute('SubTotal') ?: $comp->getAttribute('subTotal') ?: $comp->getAttribute('subtotal')), 2);
-        }
-
-        $base = 0.0;
-        $importe = 0.0;
-        $nodes = $xp->query('/*[local-name()="Comprobante"]/*[local-name()="Impuestos"]/*[local-name()="Traslados"]/*[local-name()="Traslado"][@Impuesto="002" and (@TasaOCuota="0.160000" or @TasaOCuota="0.16")]');
-
-        foreach ($nodes as $node) {
-            if (!$node instanceof \DOMElement) continue;
-            $base += $this->xmlMoneyToFloat((string)$node->getAttribute('Base'));
-            $importe += $this->xmlMoneyToFloat((string)$node->getAttribute('Importe'));
-        }
-
-        if ($base <= 0.0 || $importe <= 0.0) {
-            $base = 0.0;
-            $importe = 0.0;
-            $conceptNodes = $xp->query('//*[local-name()="Concepto"]/*[local-name()="Impuestos"]/*[local-name()="Traslados"]/*[local-name()="Traslado"][@Impuesto="002" and (@TasaOCuota="0.160000" or @TasaOCuota="0.16")]');
-            foreach ($conceptNodes as $node) {
-                if (!$node instanceof \DOMElement) continue;
-                $base += $this->xmlMoneyToFloat((string)$node->getAttribute('Base'));
-                $importe += $this->xmlMoneyToFloat((string)$node->getAttribute('Importe'));
-            }
-        }
-
-        $base = round($base, 2);
-        $importe = round($importe, 2);
-        $out['base'] = $base;
-        $out['importe'] = $importe;
-
-        if ($base > 0.0 || $importe > 0.0) {
-            $out['rows'][] = [
-                'tipo' => 'T',
-                'impuesto' => 'IVA',
-                'factor' => 'Tasa',
-                'tasa' => 16.0,
-                'base' => $base,
-                'importe' => $importe,
-            ];
-        }
-
-        return $out;
-    }
-
-    private function xmlMoneyToFloat(?string $value): float
-    {
-        $value = str_replace([',', ' '], '', trim((string)$value));
-        return is_numeric($value) ? (float)$value : 0.0;
-    }
-
-    private function parsePago20TaxRowsFromFacturaXml(string $xmlString): array
-    {
-        $out = ['total' => 0.0, 'rows' => []];
-        $xmlString = trim($xmlString);
-        if ($xmlString === '') return $out;
-
-        $dom = new \DOMDocument();
-        libxml_use_internal_errors(true);
-        $ok = $dom->loadXML($xmlString);
         libxml_clear_errors();
         if (!$ok) return $out;
 
         $xp = new \DOMXPath($dom);
         $xp->registerNamespace('cfdi', 'http://www.sat.gob.mx/cfd/4');
         $xp->registerNamespace('cfdi33', 'http://www.sat.gob.mx/cfd/3');
+        $xp->registerNamespace('tfd', 'http://www.sat.gob.mx/TimbreFiscalDigital');
 
         $comp = $xp->query('/*[local-name()="Comprobante"]')->item(0);
         if ($comp instanceof \DOMElement) {
-            $rawTotal = (string)($comp->getAttribute('Total') ?: $comp->getAttribute('total'));
-            $out['total'] = round((float)str_replace([',', ' '], '', $rawTotal), 2);
+            $out['total'] = $this->moneyString($comp->getAttribute('Total') ?: $comp->getAttribute('total'));
+            $out['subtotal'] = $this->moneyString($comp->getAttribute('SubTotal') ?: $comp->getAttribute('subTotal') ?: $comp->getAttribute('subtotal'));
+            $out['moneda'] = (string)($comp->getAttribute('Moneda') ?: $comp->getAttribute('moneda') ?: 'MXN');
+            $out['metodo_pago'] = (string)($comp->getAttribute('MetodoPago') ?: $comp->getAttribute('metodoPago'));
+            $out['serie'] = (string)($comp->getAttribute('Serie') ?: $comp->getAttribute('serie'));
+            $out['folio'] = (string)($comp->getAttribute('Folio') ?: $comp->getAttribute('folio'));
+        }
+
+        $tfd = $xp->query('//*[local-name()="TimbreFiscalDigital"]')->item(0);
+        if ($tfd instanceof \DOMElement) {
+            $out['uuid'] = strtoupper((string)($tfd->getAttribute('UUID') ?: $tfd->getAttribute('uuid')));
         }
 
         $rows = [];
         foreach ($xp->query('//*[local-name()="Concepto"]/*[local-name()="Impuestos"]/*[local-name()="Traslados"]/*[local-name()="Traslado"]') as $n) {
-            if ($n instanceof \DOMElement) {
-                $rows[] = $this->taxRowFromXmlNode($n, 'T');
-            }
+            if ($n instanceof \DOMElement) $rows[] = $this->taxRowFromFacturaXmlNode($n, 'T');
         }
         foreach ($xp->query('//*[local-name()="Concepto"]/*[local-name()="Impuestos"]/*[local-name()="Retenciones"]/*[local-name()="Retencion"]') as $n) {
-            if ($n instanceof \DOMElement) {
-                $rows[] = $this->taxRowFromXmlNode($n, 'R');
+            if ($n instanceof \DOMElement) $rows[] = $this->taxRowFromFacturaXmlNode($n, 'R');
+        }
+
+        if (empty($rows)) {
+            foreach ($xp->query('/*[local-name()="Comprobante"]/*[local-name()="Impuestos"]/*[local-name()="Traslados"]/*[local-name()="Traslado"]') as $n) {
+                if ($n instanceof \DOMElement) $rows[] = $this->taxRowFromFacturaXmlNode($n, 'T');
+            }
+            foreach ($xp->query('/*[local-name()="Comprobante"]/*[local-name()="Impuestos"]/*[local-name()="Retenciones"]/*[local-name()="Retencion"]') as $n) {
+                if ($n instanceof \DOMElement) $rows[] = $this->taxRowFromFacturaXmlNode($n, 'R');
             }
         }
 
         $grouped = [];
         foreach ($rows as $row) {
-            $key = implode('|', [$row['tipo'], $row['impuesto'], $row['factor'], number_format((float)$row['tasa'], 6, '.', '')]);
+            $key = implode('|', [$row['tipo'], $row['impuesto_sat'], $row['factor'], $row['tasa_cuota']]);
             if (!isset($grouped[$key])) {
                 $grouped[$key] = $row;
                 continue;
             }
-            $grouped[$key]['base'] += $row['base'];
-            $grouped[$key]['importe'] += $row['importe'];
+            $grouped[$key]['base'] = $this->sumMoneyStrings($grouped[$key]['base'], $row['base']);
+            if ($row['factor'] !== 'Exento') {
+                $grouped[$key]['importe_original'] = $this->sumMoneyStrings($grouped[$key]['importe_original'] ?? '0.00', $row['importe_original'] ?? '0.00');
+            }
         }
 
-        $out['rows'] = array_values(array_map(function ($row) {
-            $row['base'] = round((float)$row['base'], 2);
-            $row['importe'] = round((float)$row['importe'], 2);
-            return $row;
-        }, $grouped));
-
+        $out['rows'] = array_values($grouped);
         return $out;
     }
 
-    private function taxRowFromXmlNode(\DOMElement $n, string $tipo): array
+    private function taxRowFromFacturaXmlNode(\DOMElement $n, string $tipo): array
     {
-        $impuesto = (string)$n->getAttribute('Impuesto');
-        $factor = (string)($n->getAttribute('TipoFactor') ?: 'Tasa');
-        $tasaRaw = (string)$n->getAttribute('TasaOCuota');
-        $tasa = $tasaRaw !== '' ? round(((float)$tasaRaw) * 100, 6) : 0.0;
+        $factor = $this->mapFactorToSat((string)($n->getAttribute('TipoFactor') ?: 'Tasa'));
+        $rate = $factor === 'Exento' ? '0.000000' : $this->rateString((string)$n->getAttribute('TasaOCuota'));
+        $impuestoSat = (string)$n->getAttribute('Impuesto');
 
         return [
             'tipo' => $tipo,
-            'impuesto' => $this->mapSatCodeToImpuesto($impuesto),
-            'factor' => $this->mapFactorToSat($factor),
-            'tasa' => $tasa,
-            'base' => (float)str_replace([',', ' '], '', (string)$n->getAttribute('Base')),
-            'importe' => (float)str_replace([',', ' '], '', (string)$n->getAttribute('Importe')),
+            'impuesto' => $this->mapSatCodeToImpuesto($impuestoSat),
+            'impuesto_sat' => $impuestoSat !== '' ? $impuestoSat : '002',
+            'factor' => $factor,
+            'tasa' => $this->percentFromRateString($rate),
+            'tasa_cuota' => $rate,
+            'base' => $this->moneyString($n->getAttribute('Base')),
+            'importe_original' => $factor === 'Exento' ? null : $this->moneyString($n->getAttribute('Importe')),
         ];
     }
-
     private function getEmisorDataForUser(int $userId): array
     {
         // Intento 1: tabla "users_perfil" (origen real en facturas)
@@ -1114,7 +1011,7 @@ class ComplementosController extends Controller
                 ];
             }
         }
-        // Intento 1: tabla "informacion" (muy común en FactuCare/iKontrol)
+        // Intento 1: tabla "informacion" (muy comÃƒÆ’Ã‚Âºn en FactuCare/iKontrol)
         if (\Schema::hasTable('informacion')) {
             $row = DB::table('informacion')->where('users_id', $userId)->first();
             if ($row) {
@@ -1127,7 +1024,7 @@ class ComplementosController extends Controller
             }
         }
 
-        // Intento 2: tabla users (si guardas ahí algo)
+        // Intento 2: tabla users (si guardas ahÃƒÆ’Ã‚Â­ algo)
         $u = DB::table('users')->where('id', $userId)->first();
         if ($u) {
             return [
@@ -1146,16 +1043,16 @@ class ComplementosController extends Controller
      * - .cer (para noCertificado + Certificado base64)
      * - .key.pem (o key.pem) para firmar con MultiPac
      *
-     * Ajusta aquí a TU fuente real (tabla sellos, storage, etc.).
+     * Ajusta aquÃƒÆ’Ã‚Â­ a TU fuente real (tabla sellos, storage, etc.).
      */
     private function getCsdForUser(int $userId): array
     {
-        // Opción A: storage/app/csd/{userId}/
+        // OpciÃƒÆ’Ã‚Â³n A: storage/app/csd/{userId}/
         $base = storage_path("app/csd/{$userId}");
         $cer  = $base.'/csd.cer';
         $keyp = $base.'/csd.key.pem';
 
-        // Opción B: public/uploads/users_documentos/ (como el legacy)
+        // OpciÃƒÆ’Ã‚Â³n B: public/uploads/users_documentos/ (como el legacy)
         $legacy = public_path('uploads/users_documentos');
         $cer2   = $legacy."/{$userId}_csd.cer";
         $keyp2  = $legacy."/{$userId}_csd.key.pem";
@@ -1193,7 +1090,7 @@ class ComplementosController extends Controller
         if (!$cert) return '';
 
         $info = openssl_x509_parse($cert);
-        // El número de certificado SAT normalmente viene como serialNumberHex o serialNumber
+        // El nÃƒÆ’Ã‚Âºmero de certificado SAT normalmente viene como serialNumberHex o serialNumber
         // A veces hay que convertir hex a ascii. Dejamos ambas rutas.
         $serialHex = $info['serialNumberHex'] ?? null;
         if ($serialHex) {
@@ -1213,7 +1110,7 @@ class ComplementosController extends Controller
     {
         if (!\Schema::hasTable('folios')) return ['', 0];
 
-        // intenta columnas típicas
+        // intenta columnas tÃƒÆ’Ã‚Â­picas
         $q = DB::table('folios')->where('users_id', $userId);
 
         if (\Schema::hasColumn('folios', 'tipo')) {
@@ -1256,374 +1153,241 @@ class ComplementosController extends Controller
         DB::table('folios')->where('id', $row->id)->update(['folio' => $folio]);
     }
 
-    private function buildCfdiPagos20Xml(array $payload, $cliente, array $emisor, string $serie, int $folio, array $csd): string
-    {
-        $payload = $this->normalizePayloadPagos($payload);
-
-        $fechaDocumento = Carbon::parse((string)($payload['fecha_documento'] ?? ($payload['fecha_pago'] ?? '')))->format('Y-m-d\TH:i:s');
-        $fechaPago      = Carbon::parse((string)($payload['fecha_pago'] ?? ($payload['fecha_documento'] ?? '')))->format('Y-m-d\TH:i:s');
-
-        $certB64 = base64_encode(file_get_contents($csd['cer_path']));
-        $noCert  = (string)($csd['no_certificado'] ?? '');
-
-        $formaPagoP  = (string)($payload['forma_pago_p'] ?? '03');
-        $monedaP     = (string)($payload['moneda_p'] ?? 'MXN');
-        $tipoCambioP = (float)($payload['tipo_cambio_p'] ?? 1);
-
-        // Totales Pago (MontoTotalPagos) y totales de impuestos por SAT (básico IVA16 + retenciones)
-        [$montoTotal, $totalesSat, $impPSums] = $this->calculatePagos20Totals($payload);
-        $this->logPagos20TaxValidation($payload, $montoTotal, $totalesSat, $impPSums);
-
-        $dom = new \DOMDocument('1.0', 'UTF-8');
-        $dom->preserveWhiteSpace = false;
-        $dom->formatOutput = false;
-
-        $cfdiNS  = 'http://www.sat.gob.mx/cfd/4';
-        $pagoNS  = 'http://www.sat.gob.mx/Pagos20';
-        $xsiNS   = 'http://www.w3.org/2001/XMLSchema-instance';
-
-        $comprobante = $dom->createElementNS($cfdiNS, 'cfdi:Comprobante');
-        $dom->appendChild($comprobante);
-
-        $comprobante->setAttributeNS($xsiNS, 'xsi:schemaLocation',
-            'http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd '.
-            'http://www.sat.gob.mx/Pagos20 http://www.sat.gob.mx/sitio_internet/cfd/Pagos/Pagos20.xsd'
-        );
-
-        $comprobante->setAttribute('Version', '4.0');
-        $comprobante->setAttribute('Serie', $serie);
-        $comprobante->setAttribute('Folio', (string)$folio);
-        $comprobante->setAttribute('Fecha', $fechaDocumento);
-
-        $comprobante->setAttribute('Sello', ''); // MultiPac lo genera con keyPEM
-        $comprobante->setAttribute('NoCertificado', $noCert);
-        $comprobante->setAttribute('Certificado', preg_replace("/\r|\n/", "", $certB64));
-
-        $comprobante->setAttribute('SubTotal', '0');
-        $comprobante->setAttribute('Moneda', 'XXX');
-        $comprobante->setAttribute('Total', '0');
-        $comprobante->setAttribute('TipoDeComprobante', 'P');
-        $comprobante->setAttribute('Exportacion', '01');
-        $comprobante->setAttribute('LugarExpedicion', (string)$emisor['cp']);
-
-        // Emisor
-        $em = $dom->createElement('cfdi:Emisor');
-        $em->setAttribute('Rfc', (string)$emisor['rfc']);
-        $em->setAttribute('Nombre', (string)$emisor['nombre']);
-        $em->setAttribute('RegimenFiscal', (string)$emisor['regimen']);
-        $comprobante->appendChild($em);
-
-        // Receptor
-        $re = $dom->createElement('cfdi:Receptor');
-        $re->setAttribute('Rfc', strtoupper(trim((string)($cliente->rfc ?? ''))));
-        $re->setAttribute('Nombre', (string)($cliente->razon_social ?? ''));
-        $re->setAttribute('UsoCFDI', 'CP01');
-        $re->setAttribute('DomicilioFiscalReceptor', (string)($cliente->codigo_postal ?? ''));
-        $re->setAttribute('RegimenFiscalReceptor', (string)($cliente->regimen_fiscal ?? ''));
-        $comprobante->appendChild($re);
-
-        // Conceptos
-        $conceptos = $dom->createElement('cfdi:Conceptos');
-        $c = $dom->createElement('cfdi:Concepto');
-        $c->setAttribute('ClaveProdServ', '84111506');
-        $c->setAttribute('Cantidad', '1');
-        $c->setAttribute('ClaveUnidad', 'ACT');
-        $c->setAttribute('Descripcion', 'Pago');
-        $c->setAttribute('ValorUnitario', '0');
-        $c->setAttribute('Importe', '0');
-        $c->setAttribute('ObjetoImp', '01');
-        $conceptos->appendChild($c);
-        $comprobante->appendChild($conceptos);
-
-        // Complemento Pagos20
-        $complemento = $dom->createElement('cfdi:Complemento');
-        $pagosNode = $dom->createElementNS($pagoNS, 'pago20:Pagos');
-        $pagosNode->setAttribute('Version', '2.0');
-
-        $tot = $dom->createElement('pago20:Totales');
-        $tot->setAttribute('MontoTotalPagos', $this->fmtMoney($montoTotal));
-
-        // Totales SAT (básicos)
-        foreach ($totalesSat as $k => $v) {
-            $tot->setAttribute($k, $this->fmtMoney($v));
-        }
-        $pagosNode->appendChild($tot);
-
-        // Un solo nodo Pago (multi-docto)
-        $pago = $dom->createElement('pago20:Pago');
-        $pago->setAttribute('FechaPago', $fechaPago);
-        $pago->setAttribute('FormaDePagoP', $formaPagoP);
-        $pago->setAttribute('MonedaP', $monedaP);
-
-        if (strtoupper($monedaP) !== 'MXN') {
-            $pago->setAttribute('TipoCambioP', $this->fmtTc($tipoCambioP));
-        } else {
-            $pago->setAttribute('TipoCambioP', '1');
-        }
-
-        // Monto del pago (sumatoria en moneda P)
-        $pago->setAttribute('Monto', $this->fmtMoney($montoTotal));
-
-        // Bancarios opcionales (si al menos hay num_operacion o alguno de los otros)
-        $numOp = trim((string)($payload['num_operacion'] ?? ''));
-        $rfcOrd = trim((string)($payload['rfc_banco_emisor'] ?? ''));
-        $ctaOrd = trim((string)($payload['cuenta_ordenante'] ?? ''));
-        $rfcBen = trim((string)($payload['banco_receptor'] ?? ''));
-        $ctaBen = trim((string)($payload['cuenta_beneficiaria'] ?? ''));
-
-        if ($numOp !== '') $pago->setAttribute('NumOperacion', $numOp);
-        if ($rfcOrd !== '') $pago->setAttribute('RfcEmisorCtaOrd', $rfcOrd);
-        if ($ctaOrd !== '') $pago->setAttribute('CtaOrdenante', $ctaOrd);
-        if ($rfcBen !== '') $pago->setAttribute('RfcEmisorCtaBen', $rfcBen);
-        if ($ctaBen !== '') $pago->setAttribute('CtaBeneficiario', $ctaBen);
-
-        // Doctos relacionados
-        foreach (($payload['pagos'] ?? []) as $dr) {
-            $uuidRel = strtoupper(trim((string)($dr['uuid'] ?? '')));
-            if ($uuidRel === '') continue;
-
-            $docto = $dom->createElement('pago20:DoctoRelacionado');
-            $docto->setAttribute('IdDocumento', $uuidRel);
-
-            $monedaDR = (string)($dr['moneda_dr'] ?? 'MXN');
-            $docto->setAttribute('MonedaDR', $monedaDR);
-
-            // EquivalenciaDR / TipoCambioDR solo si difiere (simplificado)
-            if (strtoupper($monedaDR) !== strtoupper($monedaP)) {
-                $docto->setAttribute('EquivalenciaDR', '1');
-                $docto->setAttribute('TipoCambioDR', $this->fmtTc($tipoCambioP));
-            } else {
-                $docto->setAttribute('EquivalenciaDR', '1');
-            }
-
-            $docto->setAttribute('NumParcialidad', (string)((int)($dr['num_parcialidad'] ?? 1)));
-            $docto->setAttribute('ImpSaldoAnt', $this->fmtMoney((float)($dr['saldo_anterior'] ?? 0)));
-            $docto->setAttribute('ImpPagado', $this->fmtMoney((float)($dr['monto_pago'] ?? 0)));
-            $docto->setAttribute('ImpSaldoInsoluto', $this->fmtMoney((float)($dr['saldo_insoluto'] ?? 0)));
-
-            // ObjetoImpDR
-            $obj = (bool)($dr['objeto_imp'] ?? false);
-            $docto->setAttribute('ObjetoImpDR', $obj ? '02' : '01');
-
-            // ImpuestosDR si aplica
-            if ($obj && is_array($dr['impuestos'] ?? null) && count($dr['impuestos']) > 0) {
-                $impDR = $dom->createElement('pago20:ImpuestosDR');
-
-                $trasDR = null;
-                $retDR  = null;
-
-                foreach ($dr['impuestos'] as $it) {
-                    if (!is_array($it)) continue;
-
-                    $tipo = strtoupper((string)($it['tipo'] ?? 'T')); // T/R
-                    $imp  = strtoupper((string)($it['impuesto'] ?? 'IVA')); // IVA/ISR/IEPS
-                    $fac  = (string)($it['factor'] ?? 'Tasa');
-                    $base = (float)($it['base'] ?? 0);
-                    $tasaPrc = (float)($it['tasa'] ?? 0);
-                    $importe = (float)($it['importe'] ?? 0);
-
-                    $impCode = $this->mapImpuestoToSatCode($imp);
-                    $tipoFactor = $this->mapFactorToSat($fac);
-                    $tasaCuota = $this->fmtRateFromPercent($tasaPrc); // 16 => 0.160000
-
-                    if ($tipo === 'R') {
-                        if (!$retDR) $retDR = $dom->createElement('pago20:RetencionesDR');
-                        $n = $dom->createElement('pago20:RetencionDR');
-                        $n->setAttribute('BaseDR', $this->fmtMoney($base));
-                        $n->setAttribute('ImpuestoDR', $impCode);
-                        $n->setAttribute('TipoFactorDR', $tipoFactor);
-                        if ($tipoFactor !== 'Exento') {
-                            $n->setAttribute('TasaOCuotaDR', $tasaCuota);
-                        }
-                        $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
-                        $retDR->appendChild($n);
-                    } else {
-                        if (!$trasDR) $trasDR = $dom->createElement('pago20:TrasladosDR');
-                        $n = $dom->createElement('pago20:TrasladoDR');
-                        $n->setAttribute('BaseDR', $this->fmtMoney($base));
-                        $n->setAttribute('ImpuestoDR', $impCode);
-                        $n->setAttribute('TipoFactorDR', $tipoFactor);
-                        if ($tipoFactor !== 'Exento') {
-                            $n->setAttribute('TasaOCuotaDR', $tasaCuota);
-                            $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
-                        }
-                        $trasDR->appendChild($n);
-                    }
-                }
-
-                if ($retDR) $impDR->appendChild($retDR);
-                if ($trasDR) $impDR->appendChild($trasDR);
-
-                $docto->appendChild($impDR);
-            }
-
-            $pago->appendChild($docto);
-        }
-
-        // ImpuestosP (sumatoria a nivel Pago) si hubo impuestos
-        if (!empty($impPSums['traslados']) || !empty($impPSums['retenciones'])) {
-            $impP = $dom->createElement('pago20:ImpuestosP');
-
-            if (!empty($impPSums['retenciones'])) {
-                $retsP = $dom->createElement('pago20:RetencionesP');
-                foreach ($impPSums['retenciones'] as $row) {
-                    $n = $dom->createElement('pago20:RetencionP');
-                    $n->setAttribute('ImpuestoP', $row['impuesto']);
-                    $n->setAttribute('ImporteP', $this->fmtMoney($row['importe']));
-                    $retsP->appendChild($n);
-                }
-                $impP->appendChild($retsP);
-            }
-
-            if (!empty($impPSums['traslados'])) {
-                $trasP = $dom->createElement('pago20:TrasladosP');
-                foreach ($impPSums['traslados'] as $row) {
-                    $n = $dom->createElement('pago20:TrasladoP');
-                    $n->setAttribute('BaseP', $this->fmtMoney($row['base']));
-                    $n->setAttribute('ImpuestoP', $row['impuesto']);
-                    $n->setAttribute('TipoFactorP', $row['factor']);
-                    if ($row['factor'] !== 'Exento') {
-                        $n->setAttribute('TasaOCuotaP', $row['tasa']);
-                        $n->setAttribute('ImporteP', $this->fmtMoney($row['importe']));
-                    }
-                    $trasP->appendChild($n);
-                }
-                $impP->appendChild($trasP);
-            }
-
-            $pago->appendChild($impP);
-        }
-
-        $pagosNode->appendChild($pago);
-        $complemento->appendChild($pagosNode);
-        $comprobante->appendChild($complemento);
-
-        return $dom->saveXML();
-    }
-
 private function calculatePagos20Totals(array $payload): array
 {
-    $montoTotal = 0.0;
-
-    // SAT Totales básicos
-    $totalesSat = []; // atributos en pago20:Totales
-
-    // Sumatorias para ImpuestosP
-    $sumTras = []; // key => ['base'=>, 'importe'=>, 'impuesto'=>code, 'factor'=>, 'tasa'=>]
-    $sumRet  = [];
-
-    $retIVA = 0.0; $retISR = 0.0; $retIEPS = 0.0;
-
-    $baseIVA16 = 0.0; $impIVA16 = 0.0;
+    $montoTotal = '0.00';
+    $totalesSat = [];
+    $sumTras = [];
+    $sumRet = [];
+    $retTotals = ['001' => '0.00', '002' => '0.00', '003' => '0.00'];
 
     foreach (($payload['pagos'] ?? []) as $dr) {
-        $monto = (float)($dr['monto_pago'] ?? 0);
-        $montoTotal += $monto;
+        $montoTotal = $this->sumMoneyStrings($montoTotal, $dr['monto_pago'] ?? '0');
 
-        $obj = (bool)($dr['objeto_imp'] ?? false);
-        if (!$obj) continue;
+        if (empty($dr['objeto_imp'])) continue;
 
         foreach (($dr['impuestos'] ?? []) as $it) {
             if (!is_array($it)) continue;
-            $tipo = strtoupper((string)($it['tipo'] ?? 'T'));
-            $imp  = strtoupper((string)($it['impuesto'] ?? 'IVA'));
-            $fac  = (string)($it['factor'] ?? 'Tasa');
-            $factorSat = $this->mapFactorToSat($fac);
 
-            $base = (float)($it['base'] ?? 0);
-            $importe = (float)($it['importe'] ?? 0);
-            $tasaPrc = (float)($it['tasa'] ?? 0);
-            $tasaSat = $this->fmtRateFromPercent($tasaPrc);
-
-            $impCode = $this->mapImpuestoToSatCode($imp);
-
+            $tipo = strtoupper((string)($it['tipo'] ?? 'T')) === 'R' ? 'R' : 'T';
+            $impCode = (string)($it['impuesto_sat'] ?? $this->mapImpuestoToSatCode((string)($it['impuesto'] ?? 'IVA')));
+            $factorSat = $this->mapFactorToSat((string)($it['factor'] ?? 'Tasa'));
+            $tasaSat = $factorSat === 'Exento' ? '0.000000' : $this->rateString($it['tasa_cuota'] ?? $this->rateFromPercentString($it['tasa'] ?? 0));
+            $base = $this->moneyString($it['base'] ?? '0');
+            $importe = $factorSat === 'Exento' ? '0.00' : $this->moneyString($it['importe'] ?? '0');
             $key = $tipo.'|'.$impCode.'|'.$factorSat.'|'.$tasaSat;
 
             if ($tipo === 'R') {
-                if (!isset($sumRet[$key])) $sumRet[$key] = ['base'=>0.0,'importe'=>0.0,'impuesto'=>$impCode,'factor'=>$factorSat,'tasa'=>$tasaSat];
-                $sumRet[$key]['base'] += $base;
-                $sumRet[$key]['importe'] += $importe;
-
-                if ($impCode === '002') $retIVA += $importe;
-                if ($impCode === '001') $retISR += $importe;
-                if ($impCode === '003') $retIEPS += $importe;
+                if (!isset($sumRet[$key])) $sumRet[$key] = ['base'=>'0.00','importe'=>'0.00','impuesto'=>$impCode,'factor'=>$factorSat,'tasa'=>$tasaSat];
+                $sumRet[$key]['base'] = $this->sumMoneyStrings($sumRet[$key]['base'], $base);
+                $sumRet[$key]['importe'] = $this->sumMoneyStrings($sumRet[$key]['importe'], $importe);
+                if (isset($retTotals[$impCode])) $retTotals[$impCode] = $this->sumMoneyStrings($retTotals[$impCode], $importe);
             } else {
-                if (!isset($sumTras[$key])) $sumTras[$key] = ['base'=>0.0,'importe'=>0.0,'impuesto'=>$impCode,'factor'=>$factorSat,'tasa'=>$tasaSat];
-                $sumTras[$key]['base'] += $base;
-                $sumTras[$key]['importe'] += $importe;
-
-                // SAT tiene atributos específicos IVA16; si cae ahí, lo alimentamos
-                if ($impCode === '002' && $factorSat === 'Tasa' && abs((float)$tasaSat - 0.160000) < 0.000001) {
-                    $baseIVA16 += $base;
-                    $impIVA16  += $importe;
-                }
+                if (!isset($sumTras[$key])) $sumTras[$key] = ['base'=>'0.00','importe'=>'0.00','impuesto'=>$impCode,'factor'=>$factorSat,'tasa'=>$tasaSat];
+                $sumTras[$key]['base'] = $this->sumMoneyStrings($sumTras[$key]['base'], $base);
+                $sumTras[$key]['importe'] = $this->sumMoneyStrings($sumTras[$key]['importe'], $importe);
             }
         }
     }
 
-    $montoTotal = round($montoTotal, 2);
+    foreach ($sumTras as $row) {
+        if ($row['impuesto'] !== '002') continue;
 
-    // Arma atributos SAT mínimos si existen
-    if ($baseIVA16 > 0.0) {
-        $totalesSat['TotalTrasladosBaseIVA16'] = round($baseIVA16, 2);
-        $totalesSat['TotalTrasladosImpuestoIVA16'] = round($impIVA16, 2);
-    }
+        if ($row['factor'] === 'Exento') {
+            $totalesSat['TotalTrasladosBaseIVAExento'] = $this->sumMoneyStrings($totalesSat['TotalTrasladosBaseIVAExento'] ?? '0.00', $row['base']);
+            continue;
+        }
 
-    if ($retIVA > 0.0) $totalesSat['TotalRetencionesIVA'] = round($retIVA, 2);
-    if ($retISR > 0.0) $totalesSat['TotalRetencionesISR'] = round($retISR, 2);
-    if ($retIEPS > 0.0) $totalesSat['TotalRetencionesIEPS'] = round($retIEPS, 2);
+        if ($row['factor'] !== 'Tasa') continue;
 
-    $impPSums = [
-        'traslados' => array_values(array_map(function($r){
-            $r['base'] = round($r['base'], 2);
-            $r['importe'] = round($r['importe'], 2);
-            return $r;
-        }, $sumTras)),
-        'retenciones' => array_values(array_map(function($r){
-            $r['base'] = round($r['base'], 2);
-            $r['importe'] = round($r['importe'], 2);
-            return $r;
-        }, $sumRet)),
-    ];
+        $suffix = match ($row['tasa']) {
+            '0.160000' => 'IVA16',
+            '0.080000' => 'IVA8',
+            '0.000000' => 'IVA0',
+            default => null,
+        };
 
-    return [$montoTotal, $totalesSat, $impPSums];
-}
-
-private function logPagos20TaxValidation(array $payload, float $montoTotal, array $totalesSat, array $impPSums): void
-{
-    $sumImpPagado = 0.0;
-    foreach (($payload['pagos'] ?? []) as $p) {
-        $sumImpPagado += (float)($p['monto_pago'] ?? 0);
-    }
-    $sumImpPagado = round($sumImpPagado, 2);
-
-    $sumBaseIva16 = 0.0;
-    $sumImporteIva16 = 0.0;
-    foreach (($impPSums['traslados'] ?? []) as $row) {
-        if (
-            (string)($row['impuesto'] ?? '') === '002'
-            && (string)($row['factor'] ?? '') === 'Tasa'
-            && abs((float)($row['tasa'] ?? 0) - 0.160000) < 0.000001
-        ) {
-            $sumBaseIva16 += (float)($row['base'] ?? 0);
-            $sumImporteIva16 += (float)($row['importe'] ?? 0);
+        if ($suffix !== null) {
+            $totalesSat['TotalTrasladosBase'.$suffix] = $this->sumMoneyStrings($totalesSat['TotalTrasladosBase'.$suffix] ?? '0.00', $row['base']);
+            $totalesSat['TotalTrasladosImpuesto'.$suffix] = $this->sumMoneyStrings($totalesSat['TotalTrasladosImpuesto'.$suffix] ?? '0.00', $row['importe']);
         }
     }
 
-    $sumBaseIva16 = round($sumBaseIva16, 2);
-    $sumImporteIva16 = round($sumImporteIva16, 2);
-    $totalBaseIva16 = round((float)($totalesSat['TotalTrasladosBaseIVA16'] ?? 0), 2);
-    $totalImporteIva16 = round((float)($totalesSat['TotalTrasladosImpuestoIVA16'] ?? 0), 2);
+    if ($this->moneyToCents($retTotals['002']) > 0) $totalesSat['TotalRetencionesIVA'] = $retTotals['002'];
+    if ($this->moneyToCents($retTotals['001']) > 0) $totalesSat['TotalRetencionesISR'] = $retTotals['001'];
+    if ($this->moneyToCents($retTotals['003']) > 0) $totalesSat['TotalRetencionesIEPS'] = $retTotals['003'];
 
-    Log::info('Pagos20 tax totals validation', [
-        'sum_imp_pagado' => $sumImpPagado,
-        'monto_total_pagos' => round($montoTotal, 2),
-        'sum_base_p_iva16' => $sumBaseIva16,
-        'total_traslados_base_iva16' => $totalBaseIva16,
-        'sum_importe_p_iva16' => $sumImporteIva16,
-        'total_traslados_impuesto_iva16' => $totalImporteIva16,
-        'iva16_was_not_monto_total_times_rate' => abs($totalImporteIva16 - round($montoTotal * 0.16, 2)) > 0.01,
+    return [$montoTotal, $totalesSat, [
+        'traslados' => array_values($sumTras),
+        'retenciones' => array_values($sumRet),
+    ]];
+}
+
+private function logPagos20TaxValidation(array $payload, $montoTotal, array $totalesSat, array $impPSums): void
+{
+    $docs = [];
+    foreach (($payload['pagos'] ?? []) as $p) {
+        $items = [];
+        foreach (($p['impuestos'] ?? []) as $it) {
+            if (!is_array($it)) continue;
+            $items[] = [
+                'tipo' => $it['tipo'] ?? null,
+                'impuesto' => $it['impuesto_sat'] ?? $this->mapImpuestoToSatCode((string)($it['impuesto'] ?? 'IVA')),
+                'factor' => $it['factor'] ?? null,
+                'tasa' => $it['tasa_cuota'] ?? null,
+                'base_original' => $it['base_original'] ?? null,
+                'importe_original' => $it['importe_original'] ?? null,
+                'base_dr' => $it['base'] ?? null,
+                'importe_dr' => $it['importe'] ?? null,
+                'origen_xml' => !empty($it['origen_xml']),
+            ];
+        }
+
+        $saldoAnt = $this->moneyString($p['saldo_anterior'] ?? '0');
+        $impPagado = $this->moneyString($p['monto_pago'] ?? '0');
+        $docs[] = [
+            'uuid' => $p['uuid'] ?? '',
+            'imp_saldo_ant' => $saldoAnt,
+            'imp_pagado' => $impPagado,
+            'factor_prorrateo' => $this->ratioString($impPagado, $saldoAnt),
+            'impuestos' => $items,
+        ];
+    }
+
+    Log::debug('Pagos20 tax normalization before PAC', [
+        'monto_total_pagos' => $this->moneyString($montoTotal),
+        'documentos' => $docs,
+        'impuestos_p' => $impPSums,
+        'totales_pagos20' => $totalesSat,
     ]);
+}
+
+private function moneyString($value): string
+{
+    return $this->formatScaledInt($this->decimalToScaledInt($value, 2), 2);
+}
+
+private function rateString($value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') return '0.000000';
+    return $this->formatScaledInt($this->decimalToScaledInt($value, 6), 6);
+}
+
+private function rateFromPercentString($percent): string
+{
+    $micros = $this->decimalToScaledInt($percent, 6);
+    return $this->formatScaledInt($this->roundDivide($micros, 100), 6);
+}
+
+private function percentFromRateString($rate): string
+{
+    return $this->formatScaledInt($this->decimalToScaledInt($rate, 6) * 100, 6);
+}
+
+private function moneyToCents($value): int
+{
+    return $this->decimalToScaledInt($value, 2);
+}
+
+private function rateToMicros($value): int
+{
+    return $this->decimalToScaledInt($value, 6);
+}
+
+private function sumMoneyStrings($a, $b): string
+{
+    return $this->formatScaledInt($this->moneyToCents($a) + $this->moneyToCents($b), 2);
+}
+
+private function prorateMoney($amount, $paid, $saldo): string
+{
+    $saldoCents = $this->moneyToCents($saldo);
+    if ($saldoCents <= 0) return $this->moneyString($amount);
+    $cents = $this->roundDivide($this->moneyToCents($amount) * $this->moneyToCents($paid), $saldoCents);
+    return $this->formatScaledInt($cents, 2);
+}
+
+private function taxAmountFromBase($base, $rate): string
+{
+    $cents = $this->roundDivide($this->moneyToCents($base) * $this->rateToMicros($rate), 1000000);
+    return $this->formatScaledInt($cents, 2);
+}
+
+private function ratioString($paid, $saldo): string
+{
+    $saldoCents = $this->moneyToCents($saldo);
+    if ($saldoCents <= 0) return '0.000000';
+    return $this->formatScaledInt($this->roundDivide($this->moneyToCents($paid) * 1000000, $saldoCents), 6);
+}
+
+private function decimalToScaledInt($value, int $scale): int
+{
+    $value = trim((string)($value ?? '0'));
+    $value = str_replace([',', ' '], '', $value);
+    if ($value === '' || $value === '-') return 0;
+
+    $negative = str_starts_with($value, '-');
+    if ($negative) $value = substr($value, 1);
+
+    [$whole, $fraction] = array_pad(explode('.', $value, 2), 2, '');
+    $whole = preg_replace('/\D/', '', $whole) ?: '0';
+    $fraction = preg_replace('/\D/', '', $fraction) ?: '';
+    $roundDigit = strlen($fraction) > $scale ? (int)$fraction[$scale] : 0;
+    $fraction = str_pad(substr($fraction, 0, $scale), $scale, '0');
+
+    $scaled = ((int)$whole * (10 ** $scale)) + (int)$fraction;
+    if ($roundDigit >= 5) $scaled++;
+
+    return $negative ? -$scaled : $scaled;
+}
+
+private function formatScaledInt(int $value, int $scale): string
+{
+    $negative = $value < 0;
+    $value = abs($value);
+    $factor = 10 ** $scale;
+    $whole = intdiv($value, $factor);
+    $fraction = $value % $factor;
+    return ($negative ? '-' : '') . $whole . '.' . str_pad((string)$fraction, $scale, '0', STR_PAD_LEFT);
+}
+
+private function roundDivide(int $numerator, int $denominator): int
+{
+    if ($denominator <= 0) return 0;
+    if ($numerator >= 0) return intdiv($numerator + intdiv($denominator, 2), $denominator);
+    return -intdiv(abs($numerator) + intdiv($denominator, 2), $denominator);
+}
+
+private function validatePagos20TaxConsistency(array $payload): void
+{
+    foreach (($payload['pagos'] ?? []) as $p) {
+        $uuid = strtoupper(trim((string)($p['uuid'] ?? '')));
+        foreach (($p['impuestos'] ?? []) as $it) {
+            if (!is_array($it)) continue;
+            $tipo = strtoupper((string)($it['tipo'] ?? 'T')) === 'R' ? 'R' : 'T';
+            $factor = $this->mapFactorToSat((string)($it['factor'] ?? 'Tasa'));
+            $base = $this->moneyString($it['base'] ?? '0');
+            if ($this->moneyToCents($base) < 0) {
+                throw new \RuntimeException("Impuesto inconsistente en UUID {$uuid}: BaseDR no puede ser negativa ({$base}).");
+            }
+            if ($factor === 'Exento') continue;
+
+            if (!array_key_exists('tasa_cuota', $it) && !array_key_exists('tasa', $it)) {
+                throw new \RuntimeException("Impuesto inconsistente en UUID {$uuid}: TasaOCuotaDR es obligatoria para TipoFactorDR {$factor}.");
+            }
+            if (!array_key_exists('importe', $it)) {
+                throw new \RuntimeException("Impuesto inconsistente en UUID {$uuid}: ImporteDR es obligatorio para TipoFactorDR {$factor}.");
+            }
+
+            $rate = $this->rateString($it['tasa_cuota'] ?? $this->rateFromPercentString($it['tasa'] ?? 0));
+            $sent = $this->moneyString($it['importe'] ?? '0');
+            $calculated = $this->taxAmountFromBase($base, $rate);
+            if ($sent !== $calculated) {
+                throw new \RuntimeException("Impuesto inconsistente en UUID {$uuid}: BaseDR {$base} x tasa {$rate} = {$calculated}, pero se intentaba enviar {$sent}.");
+            }
+        }
+    }
 }
 
 private function mapImpuestoToSatCode(string $imp): string
@@ -1654,9 +1418,9 @@ private function mapFactorToSat(string $fac): string
     return 'Tasa';
 }
 
-private function fmtMoney(float $n): string
+private function fmtMoney($n): string
 {
-    return number_format((float)$n, 2, '.', '');
+    return $this->moneyString($n);
 }
 
 private function fmtTc(float $n): string
@@ -1665,11 +1429,9 @@ private function fmtTc(float $n): string
     return number_format((float)$n, 6, '.', '');
 }
 
-private function fmtRateFromPercent(float $percent): string
+private function fmtRateFromPercent($percent): string
 {
-    // 16 => 0.160000
-    $rate = $percent / 100;
-    return number_format((float)$rate, 6, '.', '');
+    return $this->rateFromPercentString($percent);
 }
 
 private function extractUuidFromTimbrado(string $xmlTimbrado): string
@@ -1691,7 +1453,7 @@ private function extractUuidFromTimbrado(string $xmlTimbrado): string
 
 private function getLogoBase64ForUser(int $userId): ?string
 {
-    // Ajusta si tu logo está en otra parte.
+    // Ajusta si tu logo estÃƒÆ’Ã‚Â¡ en otra parte.
     // Lo dejo seguro: si no existe, regresa null.
     $path1 = public_path("uploads/users_logos/thumbnails/{$userId}.png");
     if (file_exists($path1)) return base64_encode(file_get_contents($path1));
@@ -1773,8 +1535,6 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
 }
 
 
-
-
     /**
      * FactuCare: siguiente parcialidad sugerida por UUID
      */
@@ -1801,7 +1561,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
     }
 
     /**
-     * Parser básico CFDI 3.3 / 4.0
+     * Parser bÃƒÆ’Ã‚Â¡sico CFDI 3.3 / 4.0
      */
     private function parseCfdiBasicsFromXml(string $xmlString): array
     {
@@ -1958,24 +1718,24 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         return [
             ['id'=>'01','text'=>'01 - Efectivo'],
             ['id'=>'02','text'=>'02 - Cheque nominativo'],
-            ['id'=>'03','text'=>'03 - Transferencia electrónica de fondos'],
-            ['id'=>'04','text'=>'04 - Tarjeta de crédito'],
-            ['id'=>'05','text'=>'05 - Monedero electrónico'],
-            ['id'=>'06','text'=>'06 - Dinero electrónico'],
+            ['id'=>'03','text'=>'03 - Transferencia electrÃƒÆ’Ã‚Â³nica de fondos'],
+            ['id'=>'04','text'=>'04 - Tarjeta de crÃƒÆ’Ã‚Â©dito'],
+            ['id'=>'05','text'=>'05 - Monedero electrÃƒÆ’Ã‚Â³nico'],
+            ['id'=>'06','text'=>'06 - Dinero electrÃƒÆ’Ã‚Â³nico'],
             ['id'=>'08','text'=>'08 - Vales de despensa'],
-            ['id'=>'12','text'=>'12 - Dación en pago'],
-            ['id'=>'13','text'=>'13 - Pago por subrogación'],
-            ['id'=>'14','text'=>'14 - Pago por consignación'],
-            ['id'=>'15','text'=>'15 - Condonación'],
-            ['id'=>'17','text'=>'17 - Compensación'],
-            ['id'=>'23','text'=>'23 - Novación'],
-            ['id'=>'24','text'=>'24 - Confusión'],
-            ['id'=>'25','text'=>'25 - Remisión de deuda'],
-            ['id'=>'26','text'=>'26 - Prescripción o caducidad'],
-            ['id'=>'27','text'=>'27 - A satisfacción del acreedor'],
-            ['id'=>'28','text'=>'28 - Tarjeta de débito'],
+            ['id'=>'12','text'=>'12 - DaciÃƒÆ’Ã‚Â³n en pago'],
+            ['id'=>'13','text'=>'13 - Pago por subrogaciÃƒÆ’Ã‚Â³n'],
+            ['id'=>'14','text'=>'14 - Pago por consignaciÃƒÆ’Ã‚Â³n'],
+            ['id'=>'15','text'=>'15 - CondonaciÃƒÆ’Ã‚Â³n'],
+            ['id'=>'17','text'=>'17 - CompensaciÃƒÆ’Ã‚Â³n'],
+            ['id'=>'23','text'=>'23 - NovaciÃƒÆ’Ã‚Â³n'],
+            ['id'=>'24','text'=>'24 - ConfusiÃƒÆ’Ã‚Â³n'],
+            ['id'=>'25','text'=>'25 - RemisiÃƒÆ’Ã‚Â³n de deuda'],
+            ['id'=>'26','text'=>'26 - PrescripciÃƒÆ’Ã‚Â³n o caducidad'],
+            ['id'=>'27','text'=>'27 - A satisfacciÃƒÆ’Ã‚Â³n del acreedor'],
+            ['id'=>'28','text'=>'28 - Tarjeta de dÃƒÆ’Ã‚Â©bito'],
             ['id'=>'29','text'=>'29 - Tarjeta de servicios'],
-            ['id'=>'30','text'=>'30 - Aplicación de anticipos'],
+            ['id'=>'30','text'=>'30 - AplicaciÃƒÆ’Ã‚Â³n de anticipos'],
             ['id'=>'31','text'=>'31 - Intermediario pagos'],
             ['id'=>'99','text'=>'99 - Por definir'],
         ];
@@ -1985,7 +1745,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
     {
         return [
             ['id'=>'MXN','text'=>'MXN - Peso Mexicano'],
-            ['id'=>'USD','text'=>'USD - Dólar'],
+            ['id'=>'USD','text'=>'USD - DÃƒÆ’Ã‚Â³lar'],
             ['id'=>'EUR','text'=>'EUR - Euro'],
         ];
     }
@@ -2004,7 +1764,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             'has_payload' => $request->has('payload'),
         ]);
 
-        // Payload: POST o sesión
+        // Payload: POST o sesiÃƒÆ’Ã‚Â³n
         $payload = $request->input('payload');
         if (!$payload) {
             $payload = session('complemento_draft', []);
@@ -2016,7 +1776,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             Log::warning('Complementos.timbrar empty payload', [
                 'user_id' => $userId,
             ]);
-            return back()->with('error', 'No hay datos del complemento en sesión. Regresa a crear el complemento.');
+            return back()->with('error', 'No hay datos del complemento en sesiÃƒÆ’Ã‚Â³n. Regresa a crear el complemento.');
         }
 
         // Normaliza folio/serie (y alinea serie_pago/folio_pago con serie/folio)
@@ -2031,7 +1791,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             ->first();
 
         if (!$cliente) {
-            return back()->with('error', 'Cliente inválido.');
+            return back()->with('error', 'Cliente invÃƒÆ’Ã‚Â¡lido.');
         }
 
         try {
@@ -2065,7 +1825,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             $acuseXml    = isset($resp['acuse']) ? (string)$resp['acuse'] : null;
 
             if (trim($xmlTimbrado) === '') {
-                throw new \RuntimeException((string)($resp['mensaje'] ?? 'PAC no devolvió XML timbrado.'));
+                throw new \RuntimeException((string)($resp['mensaje'] ?? 'PAC no devolviÃƒÆ’Ã‚Â³ XML timbrado.'));
             }
 
             // 3) PDF: usa plantilla pagos2 (NO la de facturas)
@@ -2082,7 +1842,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 }
             }
 
-            // 4) Guardar + avanzar folio (atómico)
+            // 4) Guardar + avanzar folio (atÃƒÆ’Ã‚Â³mico)
             $compId = DB::transaction(function () use (
                 $userId, $payload, $cliente, $xmlOriginal, $xmlTimbrado, $uuid, $pdfB64, $acuseXml
             ) {
@@ -2267,55 +2027,43 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         foreach ($items as $it) {
             if (!is_array($it)) continue;
 
-            $tipo   = strtoupper(trim((string)($it['tipo'] ?? 'T'))); // T/R
-            $impNom = strtoupper(trim((string)($it['impuesto'] ?? 'IVA'))); // IVA/ISR/IEPS
-            $factor = (string)($it['factor'] ?? 'Tasa'); // Tasa/Cuota/Exento
-            $tasaPct = (float)($it['tasa'] ?? 0); // 16
-            $base   = (float)($it['base'] ?? 0);
-            $importe= (float)($it['importe'] ?? 0);
-
-            $impCode    = $this->mapImpuestoToSatCode($impNom);     // 001/002/003
-            $tipoFactor = $this->mapFactorToSat($factor);           // Tasa/Cuota/Exento
-            $isExento   = ($tipoFactor === 'Exento');
+            $tipo = strtoupper(trim((string)($it['tipo'] ?? 'T'))) === 'R' ? 'R' : 'T';
+            $impCode = (string)($it['impuesto_sat'] ?? $this->mapImpuestoToSatCode((string)($it['impuesto'] ?? 'IVA')));
+            $tipoFactor = $this->mapFactorToSat((string)($it['factor'] ?? 'Tasa'));
+            $base = $this->moneyString($it['base'] ?? '0');
+            $rate = $tipoFactor === 'Exento' ? '0.000000' : $this->rateString($it['tasa_cuota'] ?? $this->rateFromPercentString($it['tasa'] ?? 0));
+            $importe = $tipoFactor === 'Exento' ? null : $this->taxAmountFromBase($base, $rate);
 
             if ($tipo === 'R') {
                 if (!$retDR) $retDR = $dom->createElementNS($pagoNs, 'pago20:RetencionesDR');
-
                 $n = $dom->createElementNS($pagoNs, 'pago20:RetencionDR');
-                $n->setAttribute('BaseDR', $this->fmtMoney($base));
+                $n->setAttribute('BaseDR', $base);
                 $n->setAttribute('ImpuestoDR', $impCode);
                 $n->setAttribute('TipoFactorDR', $tipoFactor);
-                if (!$isExento) {
-                    $n->setAttribute('TasaOCuotaDR', $this->fmtRateFromPercent($tasaPct));
+                if ($tipoFactor !== 'Exento') {
+                    $n->setAttribute('TasaOCuotaDR', $rate);
+                    $n->setAttribute('ImporteDR', $importe);
                 }
-                $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
-
                 $retDR->appendChild($n);
             } else {
                 if (!$trasDR) $trasDR = $dom->createElementNS($pagoNs, 'pago20:TrasladosDR');
-
                 $n = $dom->createElementNS($pagoNs, 'pago20:TrasladoDR');
-                $n->setAttribute('BaseDR', $this->fmtMoney($base));
+                $n->setAttribute('BaseDR', $base);
                 $n->setAttribute('ImpuestoDR', $impCode);
                 $n->setAttribute('TipoFactorDR', $tipoFactor);
-
-                if (!$isExento) {
-                    $n->setAttribute('TasaOCuotaDR', $this->fmtRateFromPercent($tasaPct));
-                    $n->setAttribute('ImporteDR', $this->fmtMoney($importe));
+                if ($tipoFactor !== 'Exento') {
+                    $n->setAttribute('TasaOCuotaDR', $rate);
+                    $n->setAttribute('ImporteDR', $importe);
                 }
-
                 $trasDR->appendChild($n);
             }
         }
 
         if ($retDR)  $impDR->appendChild($retDR);
         if ($trasDR) $impDR->appendChild($trasDR);
-
+        if (!$retDR && !$trasDR) return;
         $docRel->appendChild($impDR);
     }
-
-
-
     private function generarPdfBase64ComplementoPagos2(int $userId, string $xmlTimbrado, array $payload, object $cliente): string
     {
         $xmlB64 = base64_encode($xmlTimbrado);
@@ -2353,11 +2101,11 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $pdf  = (string)($resp->pdf ?? $resp->PDF ?? '');
 
         if ($code !== '' && $code !== '210' && trim($pdf) === '') {
-            throw new \RuntimeException($msg ?: "Código PAC: {$code}");
+            throw new \RuntimeException($msg ?: "CÃƒÆ’Ã‚Â³digo PAC: {$code}");
         }
 
         if (trim($pdf) === '') {
-            throw new \RuntimeException('PAC no devolvió PDF (base64) para plantilla pagos2.');
+            throw new \RuntimeException('PAC no devolviÃƒÆ’Ã‚Â³ PDF (base64) para plantilla pagos2.');
         }
 
         return $pdf;
@@ -2431,7 +2179,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $reReg = trim((string)($cliente->regimen_fiscal ?? ''));
 
         if ($reRfc === '' || $reNom === '' || $reCp === '' || $reReg === '') {
-            throw new \RuntimeException('Cliente incompleto (RFC / Razón social / CP / Régimen fiscal).');
+            throw new \RuntimeException('Cliente incompleto (RFC / RazÃƒÆ’Ã‚Â³n social / CP / RÃƒÆ’Ã‚Â©gimen fiscal).');
         }
 
         // ===== Header CFDI =====
@@ -2453,7 +2201,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         $tipoCambioP = (float)($payload['tipo_cambio_p'] ?? 1);
 
         if ($monedaP !== 'MXN' && $tipoCambioP <= 0) {
-            throw new \RuntimeException('TipoCambioP inválido para moneda distinta a MXN.');
+            throw new \RuntimeException('TipoCambioP invÃƒÆ’Ã‚Â¡lido para moneda distinta a MXN.');
         }
 
         $pagos = $payload['pagos'] ?? [];
@@ -2471,6 +2219,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         }
 
         [$montoTotalPagos, $totalesSat, $impPSums] = $this->calculatePagos20Totals($payload);
+        $this->validatePagos20TaxConsistency($payload);
         $this->logPagos20TaxValidation($payload, $montoTotalPagos, $totalesSat, $impPSums);
 
         // ===== DOM =====
@@ -2549,25 +2298,25 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
 
         // Totales (MontoTotalPagos + atributos SAT si aplican)
         $tot = $dom->createElementNS($pagoNs, 'pago20:Totales');
-        $tot->setAttribute('MontoTotalPagos', $this->fmtMoney((float)$montoTotalPagos));
+        $tot->setAttribute('MontoTotalPagos', $this->fmtMoney($montoTotalPagos));
 
         if (is_array($totalesSat)) {
             foreach ($totalesSat as $k => $v) {
-                $tot->setAttribute($k, $this->fmtMoney((float)$v));
+                $tot->setAttribute($k, $this->fmtMoney($v));
             }
         }
 
         $pagos20->appendChild($tot);
 
-        // Pago (un solo Pago que contiene múltiples DoctoRelacionado)
+        // Pago (un solo Pago que contiene mÃƒÆ’Ã‚Âºltiples DoctoRelacionado)
         $pagoNode = $dom->createElementNS($pagoNs, 'pago20:Pago');
         $pagoNode->setAttribute('FechaPago', $fechaPago);
         $pagoNode->setAttribute('FormaDePagoP', $formaPagoP);
         $pagoNode->setAttribute('MonedaP', $monedaP);
         $pagoNode->setAttribute('TipoCambioP', ($monedaP !== 'MXN') ? $this->fmtTc($tipoCambioP) : '1');
-        $pagoNode->setAttribute('Monto', $this->fmtMoney((float)$montoTotalPagos));
+        $pagoNode->setAttribute('Monto', $this->fmtMoney($montoTotalPagos));
 
-        // Datos bancarios con TUS nombres (y soporta también los alternos)
+        // Datos bancarios con TUS nombres (y soporta tambiÃƒÆ’Ã‚Â©n los alternos)
         $numOp = trim((string)($payload['num_operacion'] ?? ''));
 
         $rfcOrd = trim((string)($payload['rfc_banco_emisor'] ?? ($payload['rfc_emisor_cta_ord'] ?? '')));
@@ -2597,18 +2346,18 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             $monedaDR = (string)($p['moneda_dr'] ?? 'MXN');
             $doc->setAttribute('MonedaDR', $monedaDR);
 
-            // EquivalenciaDR: si misma moneda, 1. Si distinta, también 1 (simplificado válido si tu TipoCambioP ya corresponde)
+            // EquivalenciaDR: si misma moneda, 1. Si distinta, tambiÃƒÆ’Ã‚Â©n 1 (simplificado vÃƒÆ’Ã‚Â¡lido si tu TipoCambioP ya corresponde)
             $doc->setAttribute('EquivalenciaDR', '1');
 
             if (strtoupper($monedaDR) !== strtoupper($monedaP)) {
-                if ($tipoCambioP <= 0) throw new \RuntimeException('No hay tipo de cambio válido para MonedaDR != MonedaP.');
+                if ($tipoCambioP <= 0) throw new \RuntimeException('No hay tipo de cambio vÃƒÆ’Ã‚Â¡lido para MonedaDR != MonedaP.');
                 $doc->setAttribute('TipoCambioDR', $this->fmtTc($tipoCambioP));
             }
 
             $doc->setAttribute('NumParcialidad', (string)max(1, (int)($p['num_parcialidad'] ?? 1)));
-            $doc->setAttribute('ImpSaldoAnt', $this->fmtMoney((float)($p['saldo_anterior'] ?? 0)));
-            $doc->setAttribute('ImpPagado', $this->fmtMoney((float)($p['monto_pago'] ?? 0)));
-            $doc->setAttribute('ImpSaldoInsoluto', $this->fmtMoney((float)($p['saldo_insoluto'] ?? 0)));
+            $doc->setAttribute('ImpSaldoAnt', $this->fmtMoney($p['saldo_anterior'] ?? '0'));
+            $doc->setAttribute('ImpPagado', $this->fmtMoney($p['monto_pago'] ?? '0'));
+            $doc->setAttribute('ImpSaldoInsoluto', $this->fmtMoney($p['saldo_insoluto'] ?? '0'));
 
             $obj = !empty($p['objeto_imp']) ? '02' : '01';
             $doc->setAttribute('ObjetoImpDR', $obj);
@@ -2630,7 +2379,7 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 foreach ($impPSums['retenciones'] as $row) {
                     $n = $dom->createElementNS($pagoNs, 'pago20:RetencionP');
                     $n->setAttribute('ImpuestoP', (string)($row['impuesto'] ?? '002'));
-                    $n->setAttribute('ImporteP', $this->fmtMoney((float)($row['importe'] ?? 0)));
+                    $n->setAttribute('ImporteP', $this->fmtMoney($row['importe'] ?? '0'));
                     $retsP->appendChild($n);
                 }
                 $impP->appendChild($retsP);
@@ -2640,12 +2389,12 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 $trasP = $dom->createElementNS($pagoNs, 'pago20:TrasladosP');
                 foreach ($impPSums['traslados'] as $row) {
                     $n = $dom->createElementNS($pagoNs, 'pago20:TrasladoP');
-                    $n->setAttribute('BaseP', $this->fmtMoney((float)($row['base'] ?? 0)));
+                    $n->setAttribute('BaseP', $this->fmtMoney($row['base'] ?? '0'));
                     $n->setAttribute('ImpuestoP', (string)($row['impuesto'] ?? '002'));
                     $n->setAttribute('TipoFactorP', (string)($row['factor'] ?? 'Tasa'));
                     if ((string)($row['factor'] ?? 'Tasa') !== 'Exento') {
                         $n->setAttribute('TasaOCuotaP', (string)($row['tasa'] ?? '0.000000'));
-                        $n->setAttribute('ImporteP', $this->fmtMoney((float)($row['importe'] ?? 0)));
+                        $n->setAttribute('ImporteP', $this->fmtMoney($row['importe'] ?? '0'));
                     }
                     $trasP->appendChild($n);
                 }
@@ -2658,100 +2407,6 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
         return $dom->saveXML();
     }
 
-
-    private function appendImpuestosDRyP(\DOMDocument $dom, \DOMElement $docRel, \DOMElement $pagoNode, array $p): void
-    {
-        $pagoNs = 'http://www.sat.gob.mx/Pagos20';
-
-        $items = $p['impuestos'] ?? [];
-        if (!is_array($items) || !count($items)) return;
-
-        // ImpuestosDR
-        $impDR = $dom->createElementNS($pagoNs, 'pago20:ImpuestosDR');
-        $trasDR = null;
-        $retDR  = null;
-
-        // ImpuestosP
-        $impP = $dom->createElementNS($pagoNs, 'pago20:ImpuestosP');
-        $trasP = null;
-        $retP  = null;
-
-        foreach ($items as $it) {
-            $tipo   = strtoupper(trim((string)($it['tipo'] ?? 'T'))); // T/R
-            $impNom = strtoupper(trim((string)($it['impuesto'] ?? 'IVA'))); // IVA/ISR/IEPS
-            $factor = (string)($it['factor'] ?? 'Tasa'); // Tasa/Cuota/Exento
-            $tasaPct = (float)($it['tasa'] ?? 0); // UI: 16
-            $base   = (float)($it['base'] ?? 0);
-            $importe= (float)($it['importe'] ?? 0);
-
-            $impCode = match ($impNom) {
-                'ISR' => '001',
-                'IVA' => '002',
-                'IEPS'=> '003',
-                default => '002',
-            };
-
-            $isExento = (strcasecmp($factor, 'Exento') === 0);
-
-            if ($tipo === 'R') {
-                if (!$retDR) $retDR = $dom->createElementNS($pagoNs, 'pago20:RetencionesDR');
-                if (!$retP)  $retP  = $dom->createElementNS($pagoNs, 'pago20:RetencionesP');
-
-                $rdr = $dom->createElementNS($pagoNs, 'pago20:RetencionDR');
-                $rdr->setAttribute('BaseDR', number_format($base, 2, '.', ''));
-                $rdr->setAttribute('ImpuestoDR', $impCode);
-                $rdr->setAttribute('TipoFactorDR', $isExento ? 'Exento' : 'Tasa');
-                if (!$isExento) {
-                    $rdr->setAttribute('TasaOCuotaDR', number_format(($tasaPct / 100), 6, '.', ''));
-                }
-                $rdr->setAttribute('ImporteDR', number_format($importe, 2, '.', ''));
-                $retDR->appendChild($rdr);
-
-                $rp = $dom->createElementNS($pagoNs, 'pago20:RetencionP');
-                $rp->setAttribute('ImpuestoP', $impCode);
-                $rp->setAttribute('ImporteP', number_format($importe, 2, '.', ''));
-                $retP->appendChild($rp);
-
-            } else {
-                if (!$trasDR) $trasDR = $dom->createElementNS($pagoNs, 'pago20:TrasladosDR');
-                if (!$trasP)  $trasP  = $dom->createElementNS($pagoNs, 'pago20:TrasladosP');
-
-                $tdr = $dom->createElementNS($pagoNs, 'pago20:TrasladoDR');
-                $tdr->setAttribute('BaseDR', number_format($base, 2, '.', ''));
-                $tdr->setAttribute('ImpuestoDR', $impCode);
-                $tdr->setAttribute('TipoFactorDR', $isExento ? 'Exento' : 'Tasa');
-
-                if (!$isExento) {
-                    $tdr->setAttribute('TasaOCuotaDR', number_format(($tasaPct / 100), 6, '.', ''));
-                    $tdr->setAttribute('ImporteDR', number_format($importe, 2, '.', ''));
-                }
-                $trasDR->appendChild($tdr);
-
-                $tp = $dom->createElementNS($pagoNs, 'pago20:TrasladoP');
-                $tp->setAttribute('BaseP', number_format($base, 2, '.', ''));
-                $tp->setAttribute('ImpuestoP', $impCode);
-                $tp->setAttribute('TipoFactorP', $isExento ? 'Exento' : 'Tasa');
-
-                if (!$isExento) {
-                    $tp->setAttribute('TasaOCuotaP', number_format(($tasaPct / 100), 6, '.', ''));
-                    $tp->setAttribute('ImporteP', number_format($importe, 2, '.', ''));
-                }
-                $trasP->appendChild($tp);
-            }
-        }
-
-        if ($trasDR || $retDR) {
-            if ($retDR)  $impDR->appendChild($retDR);
-            if ($trasDR) $impDR->appendChild($trasDR);
-            $docRel->appendChild($impDR);
-        }
-
-        if ($trasP || $retP) {
-            if ($retP)  $impP->appendChild($retP);
-            if ($trasP) $impP->appendChild($trasP);
-            $pagoNode->appendChild($impP);
-        }
-    }
 
     private function guardarComplementoTimbrado(
         int $userId,

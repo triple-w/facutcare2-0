@@ -126,9 +126,11 @@
                       @foreach($imps as $it)
                         @php
                           $tipo = strtoupper((string)($it['tipo'] ?? 'T')) === 'R' ? 'Ret' : 'Tras';
-                          $imp  = (string)($it['impuesto'] ?? 'IVA');
+                          $imp  = (string)($it['impuesto_sat'] ?? $it['impuesto'] ?? 'IVA');
                           $fac  = (string)($it['factor'] ?? 'Tasa');
-                          $tasa = (strtolower($fac)==='exento') ? 'Exento' : (number_format((float)($it['tasa'] ?? 0), 2).'%');
+                          $tasa = (strtolower($fac)==='exento')
+                            ? 'Exento'
+                            : (string)($it['tasa_cuota'] ?? number_format(((float)($it['tasa'] ?? 0)) / 100, 6, '.', ''));
                           $base = number_format((float)($it['base'] ?? 0), 2);
                           $impv = number_format((float)($it['importe'] ?? 0), 2);
                         @endphp
@@ -137,9 +139,10 @@
                             {{ $tipo }}
                           </span>
                           <span class="ml-1 font-medium">{{ $imp }}</span>
-                          <span class="ml-1 text-gray-500">{{ $tasa }}</span>
-                          <span class="ml-2 text-gray-500">Base:</span> <span class="font-mono">{{ $base }}</span>
-                          <span class="ml-2 text-gray-500">Imp:</span> <span class="font-mono">{{ $impv }}</span>
+                          <span class="ml-2 text-gray-500">TipoFactorDR:</span> <span class="font-mono">{{ $fac }}</span>
+                          <span class="ml-2 text-gray-500">TasaOCuotaDR:</span> <span class="font-mono">{{ $tasa }}</span>
+                          <span class="ml-2 text-gray-500">BaseDR:</span> <span class="font-mono">{{ $base }}</span>
+                          <span class="ml-2 text-gray-500">ImporteDR:</span> <span class="font-mono">{{ $impv }}</span>
                         </div>
                       @endforeach
                     </div>
