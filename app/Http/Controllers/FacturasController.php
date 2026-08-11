@@ -2728,15 +2728,22 @@ private function parseCfdiParties(string $xml): array
         // JSON: lo usamos para datos de impresión (FC1 lo manda base64)
         $tipo = (string)($payload['tipo_comprobante'] ?? 'I');
         $tipoNombre = ($tipo === 'I') ? 'INGRESO' : (($tipo === 'E') ? 'EGRESO' : (($tipo === 'T') ? 'TRASLADO' : $tipo));
+        $comentariosPdf = $this->comentariosPdfParaGeneracion(
+            $userId,
+            (string) ($payload['comentarios_pdf'] ?? '')
+        );
 
         $jsonArr = [
             'tipo_comprobante' => $tipo,
             'tipo_nombre' => $tipoNombre,
             'receptor_rfc' => (string)($cliente->rfc ?? ''),
             'receptor_razon_social' => (string)($cliente->razon_social ?? ''),
-            'comentarios_pdf' => $this->comentariosPdfParaGeneracion($userId, (string) ($payload['comentarios_pdf'] ?? '')),
             'serie' => (string)($payload['serie'] ?? ''),
             'folio' => (string)($payload['folio'] ?? ''),
+            'CamposPDF' => [
+                'tipoComprobante' => $tipoNombre,
+                'Comentarios' => $comentariosPdf,
+            ],
         ];
 
         if ($esRegeneracion) {
@@ -2744,8 +2751,7 @@ private function parseCfdiParties(string $xml): array
                 'factura_id' => (int) request()->route('id'),
                 'user_id' => $userId,
                 'claves_json' => array_keys($jsonArr),
-                'clave_comentarios' => 'comentarios_pdf',
-                'valor_comentarios' => $jsonArr['comentarios_pdf'],
+                'campos_pdf' => $jsonArr['CamposPDF'] ?? null,
                 'tipo_comprobante' => $jsonArr['tipo_comprobante'],
                 'serie' => $jsonArr['serie'],
                 'folio' => $jsonArr['folio'],
