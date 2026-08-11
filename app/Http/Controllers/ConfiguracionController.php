@@ -43,14 +43,18 @@ class ConfiguracionController extends Controller
             'regimen_fiscal' => ['required', 'string', 'max:5', Rule::in(array_keys(config('sat.regimenes_fiscales')))],
             'logo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:4096'],
             'logo_cropped' => ['nullable', 'string'],
+            'forzar_comentario_pdf' => ['nullable', 'boolean'],
+            'comentario_forzado_pdf' => ['nullable', 'string', 'max:20000'],
         ]);
 
         $userId = (int) auth()->id();
         $rfc = strtoupper(trim((string) $data['rfc']));
         $razonSocial = trim((string) $data['razon_social']);
         $regimen = trim((string) $data['regimen_fiscal']);
+        $forzarComentarioPdf = $request->boolean('forzar_comentario_pdf');
+        $comentarioForzadoPdf = str_replace(["\r\n", "\r"], "\n", (string) ($data['comentario_forzado_pdf'] ?? ''));
 
-        DB::transaction(function () use ($userId, $data, $rfc, $razonSocial, $regimen) {
+        DB::transaction(function () use ($userId, $data, $rfc, $razonSocial, $regimen, $forzarComentarioPdf, $comentarioForzadoPdf) {
             $this->upsertByUser('users_perfil', $userId, [
                 'rfc' => $rfc,
                 'razon_social' => $razonSocial,
@@ -84,6 +88,8 @@ class ConfiguracionController extends Controller
                 'numero_regimen' => $regimen,
                 'nombre_regimen' => config('sat.regimenes_fiscales.' . $regimen, ''),
                 'regimen_fiscal' => $regimen,
+                'forzar_comentario_pdf' => $forzarComentarioPdf,
+                'comentario_forzado_pdf' => $comentarioForzadoPdf,
             ]);
         });
 
@@ -241,6 +247,8 @@ class ConfiguracionController extends Controller
             'telefono' => old('telefono', $perfil->telefono ?? ''),
             'nombre_contacto' => old('nombre_contacto', $perfil->nombre_contacto ?? ''),
             'regimen_fiscal' => old('regimen_fiscal', $perfil->numero_regimen33 ?? $perfil->numero_regimen ?? $info->numero_regimen33 ?? $info->numero_regimen ?? $info->regimen_fiscal ?? ''),
+            'forzar_comentario_pdf' => old('forzar_comentario_pdf', (bool) ($info->forzar_comentario_pdf ?? false)),
+            'comentario_forzado_pdf' => old('comentario_forzado_pdf', $info->comentario_forzado_pdf ?? ''),
         ];
     }
 

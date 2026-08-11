@@ -31,5 +31,12 @@
         <div><b>Receptor:</b> {{ $meta['receptor_rfc'] ?? '—' }} {{ $meta['receptor_nombre'] ? ' | '.$meta['receptor_nombre'] : '' }}</div>
         <div class="muted" style="margin-top:8px;">PDF regenerado por FC2 (formato simple).</div>
     </div>
+
+    @if (trim((string) ($comentariosPdf ?? '')) !== '')
+        <div class="box">
+            <div><b>Comentarios:</b></div>
+            <div style="white-space: pre-wrap;">{{ $comentariosPdf }}</div>
+        </div>
+    @endif
 </body>
 </html>

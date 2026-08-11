@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Extensions\MultiPac\MultiPac;
+use App\Support\PdfComments;
 
 
 class FacturasController extends Controller
@@ -690,7 +691,10 @@ private function normalizarImpuestosEnPayload(array $payload): array
                 $pdfB64 = $this->generarPdfBase64DesdePacV33($userId, $xmlTimbrado, $payload, $cliente);
             } catch (\Throwable $e) {
                 // Fallback: Dompdf (si lo tienes)
-                $pdfB64 = $this->generarPdfBase64FallbackDompdf($xmlTimbrado);
+                $pdfB64 = $this->generarPdfBase64FallbackDompdf(
+                    $xmlTimbrado,
+                    $this->comentariosPdfParaGeneracion($userId, (string) ($payload['comentarios_pdf'] ?? ''))
+                );
                 // Si ni fallback pudo, NO tronamos el timbrado, pero quedará sin PDF hasta regenerar.
                 // Puedes cambiar esto a throw si lo quieres “obligatorio”.
             }
@@ -2490,7 +2494,10 @@ private function parseCfdiParties(string $xml): array
 
             $pdfB64 = $this->generarPdfBase64DesdePacV33($userId, $xml, $payloadMin, $clienteMin);
         } catch (\Throwable $e) {
-            $pdfB64 = $this->generarPdfBase64FallbackDompdf($xml);
+            $pdfB64 = $this->generarPdfBase64FallbackDompdf(
+                $xml,
+                $this->comentariosPdfParaGeneracion((int) $userId, (string) ($payloadMin['comentarios_pdf'] ?? ''))
+            );
         }
 
         if (!is_string($pdfB64)) $pdfB64 = '';
@@ -2669,7 +2676,7 @@ private function parseCfdiParties(string $xml): array
             'tipo_nombre' => $tipoNombre,
             'receptor_rfc' => (string)($cliente->rfc ?? ''),
             'receptor_razon_social' => (string)($cliente->razon_social ?? ''),
-            'comentarios_pdf' => (string)($payload['comentarios_pdf'] ?? ''),
+            'comentarios_pdf' => $this->comentariosPdfParaGeneracion($userId, (string) ($payload['comentarios_pdf'] ?? '')),
             'serie' => (string)($payload['serie'] ?? ''),
             'folio' => (string)($payload['folio'] ?? ''),
         ];
@@ -2712,7 +2719,7 @@ private function parseCfdiParties(string $xml): array
         return $pdf;
     }
 
-    private function generarPdfBase64FallbackDompdf(string $xmlTimbrado): string
+    private function generarPdfBase64FallbackDompdf(string $xmlTimbrado, string $comentariosPdf = ''): string
     {
         // Fallback para que NO se pierda el PDF si el PAC no lo entrega
         if (!class_exists(\Barryvdh\DomPDF\Facade\Pdf::class)) {
@@ -2727,9 +2734,29 @@ private function parseCfdiParties(string $xml): array
             'meta' => $meta,
             'xml' => $xmlTimbrado,
             'logoB64' => $logoB64,
+            'comentariosPdf' => $comentariosPdf,
         ])->output();
 
         return base64_encode($pdfBinary);
+    }
+
+    private function comentariosPdfParaGeneracion(int $userId, string $comentarioManual): string
+    {
+        if (!Schema::hasTable('users_info_factura')
+            || !Schema::hasColumn('users_info_factura', 'forzar_comentario_pdf')
+            || !Schema::hasColumn('users_info_factura', 'comentario_forzado_pdf')) {
+            return $comentarioManual;
+        }
+
+        $configuracion = DB::table('users_info_factura')
+            ->where('users_id', $userId)
+            ->first(['forzar_comentario_pdf', 'comentario_forzado_pdf']);
+
+        return PdfComments::combine(
+            $comentarioManual,
+            (string) ($configuracion->comentario_forzado_pdf ?? ''),
+            $configuracion ? (bool) $configuracion->forzar_comentario_pdf : false
+        );
     }
 
     private function getLogoBase64ForUser(int $userId): ?string

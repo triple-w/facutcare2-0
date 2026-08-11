@@ -149,6 +149,29 @@
 
                         <hr class="my-6">
 
+                        <h4 class="text-sm font-semibold text-gray-900 mb-4">Representación impresa / PDF</h4>
+
+                        <div class="space-y-4">
+                            <label class="inline-flex items-center gap-3">
+                                <input type="hidden" name="forzar_comentario_pdf" value="0">
+                                <input type="checkbox" name="forzar_comentario_pdf" value="1"
+                                       class="rounded border-gray-300 text-violet-600 shadow-sm focus:ring-violet-500"
+                                       @checked((bool) $perfil['forzar_comentario_pdf'])>
+                                <span class="text-sm font-medium text-gray-900">Forzar comentario en PDF</span>
+                            </label>
+
+                            <div>
+                                <label for="comentario_forzado_pdf" class="block text-sm font-medium mb-1">Comentario forzado</label>
+                                <textarea id="comentario_forzado_pdf" name="comentario_forzado_pdf" rows="6"
+                                          class="w-full rounded-md border-gray-300"
+                                          maxlength="20000"
+                                          placeholder="Leyenda fija, pagaré o condiciones comerciales">{{ $perfil['comentario_forzado_pdf'] }}</textarea>
+                                <p class="mt-1 text-xs text-gray-500">Se agregará después del comentario manual solamente en los PDFs generados mientras la opción esté activa.</p>
+                            </div>
+                        </div>
+
+                        <hr class="my-6">
+
                         <div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_280px] items-start">
                             <div>
                                 <label class="block text-sm font-medium mb-2">Logo</label>
