@@ -42,4 +42,18 @@ class PdfCommentsTest extends TestCase
             PdfComments::combine('Manual', "Línea uno\r\nLínea dos", true)
         );
     }
+
+    public function test_current_forced_comment_is_evaluated_each_time(): void
+    {
+        $this->assertSame("Original\n\nPAGARÉ TEXTO A", PdfComments::combine('Original', 'PAGARÉ TEXTO A', true));
+        $this->assertSame("Original\n\nPAGARÉ TEXTO B", PdfComments::combine('Original', 'PAGARÉ TEXTO B', true));
+    }
+
+    public function test_enabled_comments_are_trimmed_before_combining(): void
+    {
+        $this->assertSame(
+            "Original\n\nLeyenda fija",
+            PdfComments::combine("  Original \n", "\n Leyenda fija  ", true)
+        );
+    }
 }

@@ -10,12 +10,14 @@ class PdfComments
             return $manual;
         }
 
-        $forced = str_replace(["\r\n", "\r"], "\n", $forced);
-        if (trim($forced) === '') {
+        $manual = trim($manual);
+        $forced = trim(str_replace(["\r\n", "\r"], "\n", $forced));
+
+        if ($forced === '') {
             return $manual;
         }
 
-        if (trim($manual) === '') {
+        if ($manual === '') {
             return $forced;
         }
 
