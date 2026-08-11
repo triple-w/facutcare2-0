@@ -206,11 +206,7 @@
                                             <p class="mt-2">Además se conserva la miniatura `.png` para el PAC y para la vista previa dentro del sistema.</p>
 
                                             @if ($logoUrl)
-                                                <form method="POST" action="{{ route('configuracion.logo.destroy') }}" class="mt-4">
-                                                    @csrf
-                                                    @method('DELETE')
-                                                    <button class="inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100">Eliminar logo actual</button>
-                                                </form>
+                                                <button type="submit" form="delete-logo-form" class="mt-4 inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100">Eliminar logo actual</button>
                                             @endif
                                         </div>
                                     </div>
@@ -222,6 +218,13 @@
                             <button class="px-4 py-2 bg-gray-900 text-white rounded-md text-sm">Guardar información</button>
                         </div>
                     </form>
+
+                    @if ($logoUrl)
+                        <form id="delete-logo-form" method="POST" action="{{ route('configuracion.logo.destroy') }}" class="hidden">
+                            @csrf
+                            @method('DELETE')
+                        </form>
+                    @endif
                 </div>
 
                 <div class="space-y-6">
