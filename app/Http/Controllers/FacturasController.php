@@ -2729,27 +2729,26 @@ private function parseCfdiParties(string $xml): array
         // JSON: lo usamos para datos de impresión (FC1 lo manda base64)
         $tipo = (string)($payload['tipo_comprobante'] ?? 'I');
         $tipoNombre = ($tipo === 'I') ? 'INGRESO' : (($tipo === 'E') ? 'EGRESO' : (($tipo === 'T') ? 'TRASLADO' : $tipo));
+        $comentariosPdf = $this->comentariosPdfParaGeneracion(
+            $userId,
+            (string) ($payload['comentarios_pdf'] ?? '')
+        );
 
         $jsonArr = [
-            'tipo_comprobante' => $tipo,
-            'tipo_nombre' => $tipoNombre,
-            'receptor_rfc' => (string)($cliente->rfc ?? ''),
-            'receptor_razon_social' => (string)($cliente->razon_social ?? ''),
-            'comentarios_pdf' => $this->comentariosPdfParaGeneracion($userId, (string) ($payload['comentarios_pdf'] ?? '')),
-            'serie' => (string)($payload['serie'] ?? ''),
-            'folio' => (string)($payload['folio'] ?? ''),
+            'tipoComprobante' => $tipoNombre,
         ];
+
+        if (trim($comentariosPdf) !== '') {
+            $jsonArr['Comentarios'] = $comentariosPdf;
+        }
 
         if ($esRegeneracion) {
             Log::info('[PDF-REGEN-DEBUG] Payload PAC antes de Base64', [
                 'factura_id' => (int) request()->route('id'),
                 'user_id' => $userId,
-                'claves_json' => array_keys($jsonArr),
-                'clave_comentarios' => 'comentarios_pdf',
-                'valor_comentarios' => $jsonArr['comentarios_pdf'],
-                'tipo_comprobante' => $jsonArr['tipo_comprobante'],
-                'serie' => $jsonArr['serie'],
-                'folio' => $jsonArr['folio'],
+                'tipoComprobante' => $jsonArr['tipoComprobante'] ?? null,
+                'Comentarios' => $jsonArr['Comentarios'] ?? null,
+                'json_decodificado' => $jsonArr,
             ]);
         }
 
