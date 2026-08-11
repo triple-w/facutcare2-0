@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use App\Extensions\MultiPac\MultiPac;
 use App\Support\PdfComments;
@@ -2469,6 +2470,33 @@ private function parseCfdiParties(string $xml): array
         $userId = auth()->id();
         $factura = $this->facturaOrFail($id);
 
+        $configuracionPdf = null;
+        if (Schema::hasTable('users_info_factura')
+            && Schema::hasColumn('users_info_factura', 'forzar_comentario_pdf')
+            && Schema::hasColumn('users_info_factura', 'comentario_forzado_pdf')) {
+            $configuracionPdf = DB::table('users_info_factura')
+                ->where('users_id', $userId)
+                ->first(['forzar_comentario_pdf', 'comentario_forzado_pdf']);
+        }
+
+        $comentarioOriginal = (string) ($factura->comentarios_pdf ?? '');
+        $comentarioFinal = $this->comentariosPdfParaGeneracion((int) $userId, $comentarioOriginal);
+
+        Log::info('[PDF-REGEN-DEBUG] Inicio y configuración', [
+            'factura_id' => (int) $factura->id,
+            'user_id' => (int) $userId,
+            'forzar_comentario_pdf' => $configuracionPdf ? (bool) $configuracionPdf->forzar_comentario_pdf : null,
+            'comentario_forzado_pdf' => $configuracionPdf ? (string) $configuracionPdf->comentario_forzado_pdf : null,
+            'comentario_original' => $comentarioOriginal,
+        ]);
+
+        Log::info('[PDF-REGEN-DEBUG] Comentario combinado', [
+            'factura_id' => (int) $factura->id,
+            'user_id' => (int) $userId,
+            'comentario_original' => $comentarioOriginal,
+            'comentario_final' => $comentarioFinal,
+        ]);
+
         $xml = (string) ($factura->xml ?? '');
         if (trim($xml) === '') {
             return back()->with('error', 'No hay XML para regenerar el PDF.');
@@ -2492,8 +2520,21 @@ private function parseCfdiParties(string $xml): array
                 'razon_social' => $factura->razon_social ?? '',
             ];
 
+            Log::info('[PDF-REGEN-DEBUG] Generador seleccionado', [
+                'factura_id' => (int) $factura->id,
+                'user_id' => (int) $userId,
+                'generador' => 'PAC TimbradorXpress/WSTools33',
+            ]);
+
             $pdfB64 = $this->generarPdfBase64DesdePacV33($userId, $xml, $payloadMin, $clienteMin);
         } catch (\Throwable $e) {
+            Log::info('[PDF-REGEN-DEBUG] Generador seleccionado', [
+                'factura_id' => (int) $factura->id,
+                'user_id' => (int) $userId,
+                'generador' => 'fallback Dompdf',
+                'motivo_clase' => get_class($e),
+            ]);
+
             $pdfB64 = $this->generarPdfBase64FallbackDompdf(
                 $xml,
                 $this->comentariosPdfParaGeneracion((int) $userId, (string) ($payloadMin['comentarios_pdf'] ?? ''))
@@ -2505,10 +2546,18 @@ private function parseCfdiParties(string $xml): array
             return back()->with('error', 'No fue posible regenerar el PDF (PAC y fallback fallaron).');
         }
 
-        DB::table('facturas')
+        $filasActualizadas = DB::table('facturas')
             ->where('id', $factura->id)
             ->where('users_id', $userId)
             ->update(['pdf' => $pdfB64]);
+
+        Log::info('[PDF-REGEN-DEBUG] PDF persistido', [
+            'factura_id' => (int) $factura->id,
+            'user_id' => (int) $userId,
+            'update_pdf_ejecutado' => true,
+            'filas_actualizadas' => (int) $filasActualizadas,
+            'pdf_base64_bytes' => strlen($pdfB64),
+        ]);
 
         return back()->with('success', 'PDF regenerado correctamente.');
     }
@@ -2658,6 +2707,15 @@ private function parseCfdiParties(string $xml): array
 
     private function generarPdfBase64DesdePacV33(int $userId, string $xmlTimbrado, array $payload, object $cliente): string
     {
+        $esRegeneracion = request()->routeIs('facturas.regenerarPdf');
+
+        if ($esRegeneracion) {
+            Log::info('[PDF-REGEN-DEBUG] Entró a generarPdfBase64DesdePacV33', [
+                'factura_id' => (int) request()->route('id'),
+                'user_id' => $userId,
+            ]);
+        }
+
         // En FC1 se manda xmlB64 + plantilla + json + logo
         $xmlB64 = base64_encode($xmlTimbrado);
 
@@ -2681,6 +2739,19 @@ private function parseCfdiParties(string $xml): array
             'folio' => (string)($payload['folio'] ?? ''),
         ];
 
+        if ($esRegeneracion) {
+            Log::info('[PDF-REGEN-DEBUG] Payload PAC antes de Base64', [
+                'factura_id' => (int) request()->route('id'),
+                'user_id' => $userId,
+                'claves_json' => array_keys($jsonArr),
+                'clave_comentarios' => 'comentarios_pdf',
+                'valor_comentarios' => $jsonArr['comentarios_pdf'],
+                'tipo_comprobante' => $jsonArr['tipo_comprobante'],
+                'serie' => $jsonArr['serie'],
+                'folio' => $jsonArr['folio'],
+            ]);
+        }
+
         $jsonB64 = base64_encode(json_encode($jsonArr, JSON_UNESCAPED_UNICODE));
 
         $mp = new MultiPac();
@@ -2694,6 +2765,18 @@ private function parseCfdiParties(string $xml): array
 
         // Si regresó string (SOAP raw), lo tratamos como error
         if (is_string($resp)) {
+            if ($esRegeneracion) {
+                Log::info('[PDF-REGEN-DEBUG] Respuesta PAC', [
+                    'factura_id' => (int) request()->route('id'),
+                    'user_id' => $userId,
+                    'code' => null,
+                    'message' => null,
+                    'respuesta_tipo' => 'string',
+                    'regreso_pdf' => false,
+                    'pdf_base64_bytes' => 0,
+                ]);
+            }
+
             throw new \RuntimeException('PAC PDF (SOAP): ' . mb_substr(strip_tags($resp), 0, 500));
         }
 
@@ -2702,6 +2785,18 @@ private function parseCfdiParties(string $xml): array
         $msg  = (string)($resp->message ?? $resp->mensaje ?? $resp->MENSAJE ?? '');
 
         $pdf = (string)($resp->pdf ?? $resp->PDF ?? '');
+
+        if ($esRegeneracion) {
+            Log::info('[PDF-REGEN-DEBUG] Respuesta PAC', [
+                'factura_id' => (int) request()->route('id'),
+                'user_id' => $userId,
+                'code' => $code,
+                'message' => $msg,
+                'respuesta_tipo' => is_object($resp) ? get_class($resp) : gettype($resp),
+                'regreso_pdf' => trim($pdf) !== '',
+                'pdf_base64_bytes' => strlen($pdf),
+            ]);
+        }
 
         if ($code !== '' && $code !== '210' && $pdf === '') {
             // Si tienes diccionario: traducirCodigoPac('generarPDF', $code, $msg)
@@ -2721,6 +2816,14 @@ private function parseCfdiParties(string $xml): array
 
     private function generarPdfBase64FallbackDompdf(string $xmlTimbrado, string $comentariosPdf = ''): string
     {
+        if (request()->routeIs('facturas.regenerarPdf')) {
+            Log::info('[PDF-REGEN-DEBUG] Entró al fallback Dompdf', [
+                'factura_id' => (int) request()->route('id'),
+                'user_id' => (int) auth()->id(),
+                'comentarios_pdf' => $comentariosPdf,
+            ]);
+        }
+
         // Fallback para que NO se pierda el PDF si el PAC no lo entrega
         if (!class_exists(\Barryvdh\DomPDF\Facade\Pdf::class)) {
             return '';
