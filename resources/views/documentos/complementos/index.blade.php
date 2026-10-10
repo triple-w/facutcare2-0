@@ -2,7 +2,7 @@
     <x-slot name="header">
         <div class="flex items-center justify-between">
             <h2 class="font-semibold text-xl text-gray-800 leading-tight">Complementos de pago</h2>
-            <a href="{{ route('complementos.create') }}" class="px-4 py-2 bg-gray-900 text-white rounded-md text-sm">
+            <a href="{{ route('complementos.nueva') }}" class="px-4 py-2 bg-gray-900 text-white rounded-md text-sm">
                 + Nuevo complemento
             </a>
         </div>

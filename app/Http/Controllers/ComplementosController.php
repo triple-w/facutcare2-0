@@ -77,7 +77,6 @@ class ComplementosController extends Controller
     // =========================
     public function create()
     {
-        session()->forget('complemento_draft');
         $userId = auth()->id();
 
         $clientes = DB::table('clientes')
@@ -126,9 +125,79 @@ class ComplementosController extends Controller
             return redirect()->route('complementos.create')->with('error', 'Payload invÃƒÆ’Ã‚Â¡lido.');
         }
 
-        // guarda borrador para volver a create con info
+        // Guarda primero el borrador original para no perder la captura si falla
+        // la validacion de CFDI relacionados.
+        session(['complemento_draft' => $payload]);
+
+        try {
+            $payload = $this->normalizeCfdiRelacionadosPayload($payload);
+        } catch (\InvalidArgumentException $e) {
+            return redirect()
+                ->route('complementos.create')
+                ->with('error', $e->getMessage());
+        }
+
+        // El preview y el timbrado trabajan con UUID ya limpios y normalizados.
         session(['complemento_draft' => $payload]);
         return $this->renderPreviewFromPayload($payload);
+    }
+
+    /**
+     * Normaliza y valida cfdi:CfdiRelacionados (no pago20:DoctoRelacionado).
+     */
+    private function normalizeCfdiRelacionadosPayload(array $payload): array
+    {
+        $relacionados = $payload['relacionados'] ?? [];
+        if ($relacionados === null) {
+            $relacionados = [];
+        }
+        if (!is_array($relacionados)) {
+            throw new \InvalidArgumentException('CFDI Relacionados debe ser una lista valida.');
+        }
+
+        $normalizados = [];
+        $uuidVistos = [];
+        $uuidPattern = '/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/D';
+        $tiposValidos = ['01', '02', '03', '04', '05', '06', '07'];
+
+        foreach ($relacionados as $index => $relacionado) {
+            if (!is_array($relacionado)) {
+                throw new \InvalidArgumentException('El CFDI relacionado de la fila ' . ($index + 1) . ' no es valido.');
+            }
+
+            $tipoRelacion = trim((string)($relacionado['tipo_relacion'] ?? ''));
+            $uuid = strtoupper(trim((string)($relacionado['uuid'] ?? '')));
+
+            // Una fila agregada pero vacia no genera ningun nodo.
+            if ($uuid === '') {
+                continue;
+            }
+
+            if (!in_array($tipoRelacion, $tiposValidos, true)) {
+                throw new \InvalidArgumentException(
+                    'Selecciona un Tipo de relacion valido para el UUID ' . $uuid . '.'
+                );
+            }
+            if (!preg_match($uuidPattern, $uuid)) {
+                throw new \InvalidArgumentException(
+                    'El UUID de CFDI relacionado "' . $uuid . '" no tiene el formato XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX.'
+                );
+            }
+            if (isset($uuidVistos[$uuid])) {
+                throw new \InvalidArgumentException(
+                    'El UUID de CFDI relacionado "' . $uuid . '" esta duplicado en el complemento.'
+                );
+            }
+
+            $uuidVistos[$uuid] = true;
+            $normalizados[] = [
+                'tipo_relacion' => $tipoRelacion,
+                'uuid' => $uuid,
+            ];
+        }
+
+        $payload['relacionados'] = $normalizados;
+        return $payload;
     }
 
     private function renderPreviewFromPayload(array $payload, ?string $flashError = null)
@@ -1799,6 +1868,9 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
                 'user_id' => $userId,
                 'cliente_id' => $clienteId,
             ]);
+            $payload = $this->normalizeCfdiRelacionadosPayload($payload);
+            session(['complemento_draft' => $payload]);
+
             // 1) Generar XML Pagos 2.0
             $xmlOriginal = $this->generarXmlPagos20DesdePayload($userId, $payload, $cliente);
             Log::info('Complementos.timbrar xml generated', [
@@ -2137,6 +2209,8 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
 
     private function generarXmlPagos20DesdePayload(int $userId, array $payload, object $cliente): string
     {
+        $payload = $this->normalizeCfdiRelacionadosPayload($payload);
+
         // Normaliza payload (saldos, impuestos, tasas, etc.)
         if (method_exists($this, 'normalizePayloadPagos')) {
             $payload = $this->normalizePayloadPagos($payload);
@@ -2258,6 +2332,26 @@ private function insertComplementoPagosDb(int $complementoId, array $payload): v
             'http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd ' .
             'http://www.sat.gob.mx/Pagos20 http://www.sat.gob.mx/sitio_internet/cfd/Pagos/Pagos20.xsd'
         );
+
+        // CFDI relacionados del Comprobante. Es independiente de los nodos
+        // pago20:DoctoRelacionado y, por secuencia CFDI 4.0, va antes de Emisor.
+        $relacionadosPorTipo = [];
+        foreach (($payload['relacionados'] ?? []) as $relacionado) {
+            $relacionadosPorTipo[$relacionado['tipo_relacion']][] = $relacionado['uuid'];
+        }
+
+        foreach ($relacionadosPorTipo as $tipoRelacion => $uuids) {
+            $cfdiRelacionados = $dom->createElementNS($cfdiNs, 'cfdi:CfdiRelacionados');
+            $cfdiRelacionados->setAttribute('TipoRelacion', $tipoRelacion);
+
+            foreach ($uuids as $uuid) {
+                $cfdiRelacionado = $dom->createElementNS($cfdiNs, 'cfdi:CfdiRelacionado');
+                $cfdiRelacionado->setAttribute('UUID', $uuid);
+                $cfdiRelacionados->appendChild($cfdiRelacionado);
+            }
+
+            $c->appendChild($cfdiRelacionados);
+        }
 
         // Emisor
         $emisor = $dom->createElement('cfdi:Emisor');

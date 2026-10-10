@@ -47,6 +47,12 @@
     </div>
   </div>
 
+  @if(session('error'))
+    <div class="mb-6 p-3 rounded-lg bg-red-100 text-red-800">
+      {{ session('error') }}
+    </div>
+  @endif
+
   {{-- FORM Preview (payload JSON) --}}
   <form x-ref="previewForm" method="POST" action="{{ route('complementos.preview') }}" class="hidden">
     @csrf
@@ -336,7 +342,70 @@
   </div>
 
   {{-- =========================
-       3) Datos bancarios (opcionales)
+       3) CFDI Relacionados (nivel cfdi:Comprobante)
+     ========================= --}}
+  <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-4 mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">CFDI Relacionados</h2>
+        <p class="mt-1 text-xs text-gray-500">
+          Relaciona otros CFDI con el comprobante. Esta seccion es independiente de las facturas pagadas (DoctoRelacionado).
+        </p>
+      </div>
+      <button type="button"
+              class="btn-sm bg-gray-100 dark:bg-gray-700"
+              @click="agregarRelacionado()">
+        + Agregar
+      </button>
+    </div>
+
+    <div class="space-y-3">
+      <template x-for="(r, i) in form.relacionados" :key="r.uid">
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-2 items-end border border-gray-200 dark:border-gray-700/60 rounded-lg p-3">
+          <div class="md:col-span-4">
+            <label class="block text-xs text-gray-500 mb-1">Tipo relacion</label>
+            <select class="form-select w-full" x-model="r.tipo_relacion">
+              <option value="">Selecciona...</option>
+              <option value="01">01 - Nota de credito</option>
+              <option value="02">02 - Nota de debito</option>
+              <option value="03">03 - Devolucion</option>
+              <option value="04">04 - Sustitucion</option>
+              <option value="05">05 - Traslados facturados previamente</option>
+              <option value="06">06 - Factura por traslados previos</option>
+              <option value="07">07 - Aplicacion de anticipo</option>
+            </select>
+          </div>
+
+          <div class="md:col-span-7">
+            <label class="block text-xs text-gray-500 mb-1">UUID</label>
+            <input type="text"
+                   class="form-input w-full font-mono"
+                   maxlength="36"
+                   autocomplete="off"
+                   x-model="r.uuid"
+                   @blur="r.uuid = String(r.uuid || '').trim().toUpperCase()"
+                   placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX">
+          </div>
+
+          <div class="md:col-span-1 text-right">
+            <button type="button"
+                    class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-red-600 text-white hover:bg-red-700"
+                    title="Eliminar CFDI relacionado"
+                    @click="eliminarRelacionado(i)">
+              x
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <div class="text-sm text-gray-500" x-show="form.relacionados.length === 0">
+        Sin CFDI relacionados.
+      </div>
+    </div>
+  </div>
+
+  {{-- =========================
+       4) Datos bancarios (opcionales)
      ========================= --}}
   <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-4 mb-6">
     <div class="flex items-center justify-between mb-4">
@@ -372,7 +441,7 @@
   </div>
 
   {{-- =========================
-       4) Datos del pago + Totales
+       5) Datos del pago + Totales
      ========================= --}}
   <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-4">
     <div class="flex items-center justify-between mb-4">
@@ -604,6 +673,7 @@
       banco_receptor: '',
       cuenta_beneficiaria: '',
 
+      relacionados: [],
       pagos: []
     },
 
@@ -703,6 +773,15 @@
       if (p?.cuenta_ordenante) this.form.cuenta_ordenante = p.cuenta_ordenante;
       if (p?.banco_receptor) this.form.banco_receptor = p.banco_receptor;
       if (p?.cuenta_beneficiaria) this.form.cuenta_beneficiaria = p.cuenta_beneficiaria;
+
+      // CFDI relacionados del Comprobante (distintos de pagos/DoctoRelacionado)
+      if (Array.isArray(p?.relacionados)) {
+        this.form.relacionados = p.relacionados.map(r => ({
+          uid: this.uid(),
+          tipo_relacion: String(r?.tipo_relacion || '').trim(),
+          uuid: String(r?.uuid || '').trim().toUpperCase(),
+        }));
+      }
 
       // pagos prefill
       if (Array.isArray(p?.pagos)) {
@@ -1038,6 +1117,45 @@
       alert('Guardar borrador: pendiente (si quieres lo cableamos a BD).');
     },
 
+    agregarRelacionado(){
+      this.form.relacionados.push({ uid: this.uid(), tipo_relacion: '', uuid: '' });
+    },
+
+    eliminarRelacionado(index){
+      this.form.relacionados.splice(index, 1);
+    },
+
+    relacionadosParaPayload(){
+      const uuidPattern = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/;
+      const tiposValidos = new Set(['01', '02', '03', '04', '05', '06', '07']);
+      const vistos = new Set();
+      const relacionados = [];
+
+      for (let index = 0; index < this.form.relacionados.length; index++) {
+        const row = this.form.relacionados[index];
+        const tipo = String(row.tipo_relacion || '').trim();
+        const uuid = String(row.uuid || '').trim().toUpperCase();
+        row.uuid = uuid;
+
+        // Las filas completamente vacias no forman parte del payload.
+        if (!uuid) continue;
+        if (!tiposValidos.has(tipo)) {
+          throw new Error(`Selecciona un Tipo de relacion valido en la fila ${index + 1} de CFDI Relacionados.`);
+        }
+        if (!uuidPattern.test(uuid)) {
+          throw new Error(`El UUID de la fila ${index + 1} no tiene el formato XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX.`);
+        }
+        if (vistos.has(uuid)) {
+          throw new Error(`El UUID ${uuid} esta duplicado en CFDI Relacionados.`);
+        }
+
+        vistos.add(uuid);
+        relacionados.push({ tipo_relacion: tipo, uuid });
+      }
+
+      return relacionados;
+    },
+
     previsualizar(){
       if (!this.form.cliente_id) { alert('Selecciona un cliente'); return; }
       if (!this.form.fecha_documento) { alert('Captura la fecha del documento'); return; }
@@ -1053,6 +1171,14 @@
       for (const p of this.form.pagos) {
         if (!p.uuid) { alert('Hay una fila sin UUID'); return; }
         if (Number(p.monto_pago || 0) <= 0) { alert('Hay una factura con Monto pago = 0'); return; }
+      }
+
+      let relacionados;
+      try {
+        relacionados = this.relacionadosParaPayload();
+      } catch (error) {
+        alert(error.message);
+        return;
       }
 
       this.isSubmitting = true;
@@ -1076,6 +1202,8 @@
         cuenta_ordenante: this.form.cuenta_ordenante,
         banco_receptor: this.form.banco_receptor,
         cuenta_beneficiaria: this.form.cuenta_beneficiaria,
+
+        relacionados,
 
         pagos: this.form.pagos.map(p => ({
           factura_id: p.factura_id,

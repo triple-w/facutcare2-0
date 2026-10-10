@@ -72,7 +72,7 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 
         // Complementos de pago
         Route::get('complementos', [ComplementosController::class, 'index'])->name('complementos.index');
-        //Route::get('complementos/nueva', [ComplementosController::class, 'nueva'])->name('complementos.nueva');
+        Route::get('complementos/nueva', [ComplementosController::class, 'nueva'])->name('complementos.nueva');
         
         Route::get('complementos/create', [ComplementosController::class, 'create'])->name('complementos.create');
         Route::post('complementos/preview', [ComplementosController::class, 'preview'])->name('complementos.preview');

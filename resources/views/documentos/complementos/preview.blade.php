@@ -40,6 +40,35 @@
       </div>
     </div>
 
+    {{-- CFDI relacionados del Comprobante (no son DoctoRelacionado de Pagos 2.0) --}}
+    @if(!empty($payload['relacionados']))
+      <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">CFDI Relacionados</h2>
+          <span class="text-xs text-gray-500">Nivel cfdi:Comprobante</span>
+        </div>
+
+        <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 dark:bg-gray-700/50 text-gray-700 dark:text-gray-200">
+              <tr>
+                <th class="p-2 text-left">Tipo relacion</th>
+                <th class="p-2 text-left">UUID</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+              @foreach($payload['relacionados'] as $relacionado)
+                <tr class="bg-white dark:bg-gray-800">
+                  <td class="p-2 font-medium">{{ $relacionado['tipo_relacion'] ?? '' }}</td>
+                  <td class="p-2 font-mono text-xs">{{ $relacionado['uuid'] ?? '' }}</td>
+                </tr>
+              @endforeach
+            </tbody>
+          </table>
+        </div>
+      </div>
+    @endif
+
     {{-- Datos bancarios (opcionales) --}}
     <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
       <div class="flex items-center justify-between mb-3">
@@ -73,7 +102,7 @@
     {{-- Tabla de doctos --}}
     <div>
       <div class="flex items-center justify-between mb-3">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Doctos relacionados</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Doctos relacionados del pago</h2>
       </div>
 
       <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
